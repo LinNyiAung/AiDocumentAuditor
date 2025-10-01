@@ -328,7 +328,6 @@ Important:
             ("Gross weight", "total_gross_weight_kgs", "weight"),
             ("Number of invoices", "number", "general"),
             ("Date of invoices", "invoice_date", "general"),
-            ("Product Description", "description", "description")
         ]
         
         matches = 0

@@ -110,7 +110,21 @@ const DocumentProcessor = () => {
     }
   };
 
-  const ValueComparisonCard = ({ title, formDValue, invoiceValue, similarity, fieldName }) => (
+  const ExtractedDataCard = ({ title, data }) => (
+    <div className="border rounded-lg p-4 bg-blue-50">
+      <h5 className="font-medium text-gray-900 mb-3">{title}</h5>
+      <div className="space-y-2">
+        {Object.entries(data).map(([key, value]) => (
+          <div key={key} className="text-sm">
+            <span className="font-medium text-gray-700">{key}: </span>
+            <span className="text-gray-600">{value || 'Not found'}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const ValueComparisonCard = ({ title, formDValue, invoiceValue, similarity }) => (
     <div className="border rounded-lg p-4 bg-gray-50">
       <div className="flex justify-between items-start mb-3">
         <h5 className="font-medium text-gray-900">{title}</h5>
@@ -183,8 +197,6 @@ const DocumentProcessor = () => {
             </div>
           </div>
           
-          
-          
           {match.match_reason && (
             <div className="text-xs text-gray-600 italic">
               Match reason: {match.match_reason}
@@ -253,15 +265,12 @@ const DocumentProcessor = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="max-w-6xl mx-auto">
-        {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-900 mb-2">Document Processor</h1>
           <p className="text-lg text-gray-600">Upload Form D and Invoice PDFs for AI-powered analysis</p>
         </div>
 
-        {/* Main Content */}
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* Upload Section */}
           <div className="lg:col-span-1">
             <div className="bg-white rounded-xl shadow-lg p-6">
               <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
@@ -270,7 +279,6 @@ const DocumentProcessor = () => {
               </h2>
 
               <div className="space-y-4">
-                {/* Form D Upload */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Form D PDF
@@ -297,7 +305,6 @@ const DocumentProcessor = () => {
                   </div>
                 </div>
 
-                {/* Invoice Upload */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Invoice PDF
@@ -324,7 +331,6 @@ const DocumentProcessor = () => {
                   </div>
                 </div>
 
-                {/* Submit Button */}
                 <button
                   onClick={handleSubmit}
                   disabled={!formDFile || !invoiceFile || isProcessing}
@@ -341,7 +347,6 @@ const DocumentProcessor = () => {
                 </button>
               </div>
 
-              {/* Error Display */}
               {error && (
                 <div className="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
                   {error}
@@ -350,11 +355,9 @@ const DocumentProcessor = () => {
             </div>
           </div>
 
-          {/* Results Section */}
           <div className="lg:col-span-2">
             {result ? (
               <div className="space-y-6">
-                {/* Summary Card */}
                 <div className="bg-white rounded-xl shadow-lg p-6">
                   <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-semibold text-gray-900">Analysis Summary</h2>
@@ -401,7 +404,6 @@ const DocumentProcessor = () => {
                   )}
                 </div>
 
-                {/* Validation Details */}
                 {result.data?.validation && (
                   <div className="bg-white rounded-xl shadow-lg p-6">
                     <div className="flex items-center justify-between mb-4">
@@ -425,7 +427,6 @@ const DocumentProcessor = () => {
                     </div>
                     
                     <div className="space-y-4">
-                      {/* Product Validation */}
                       {result.data.validation.product_validation && (
                         <div className="border rounded-lg p-4">
                           <div className="flex items-center justify-between mb-2">
@@ -438,17 +439,28 @@ const DocumentProcessor = () => {
                             </span>
                           </div>
                           
-                          {expandedSections.validation && result.data.validation.product_validation.matches?.length > 0 && (
+                          {expandedSections.validation && (
                             <div className="mt-4 space-y-4">
-                              {result.data.validation.product_validation.matches.slice(0, 3).map((match, idx) => (
-                                <ValidationMatchCard key={idx} match={match} type="product" />
-                              ))}
+                              {result.data.validation.product_validation.matches?.length > 0 ? (
+                                result.data.validation.product_validation.matches.slice(0, 3).map((match, idx) => (
+                                  <ValidationMatchCard key={idx} match={match} type="product" />
+                                ))
+                              ) : (
+                                result.data?.formd_data && (
+                                  <ExtractedDataCard 
+                                    title="Extracted Form D Product Information (No Matches Found)"
+                                    data={{
+                                      'HS CODE': result.data.formd_data['HS CODE'],
+                                      'Product Description': result.data.formd_data['Product Description']
+                                    }}
+                                  />
+                                )
+                              )}
                             </div>
                           )}
                         </div>
                       )}
 
-                      {/* Company Validation */}
                       {result.data.validation.company_validation && (
                         <div className="border rounded-lg p-4">
                           <div className="flex items-center justify-between mb-2">
@@ -461,11 +473,24 @@ const DocumentProcessor = () => {
                             </span>
                           </div>
                           
-                          {expandedSections.validation && result.data.validation.company_validation.matches?.length > 0 && (
+                          {expandedSections.validation && (
                             <div className="mt-4 space-y-4">
-                              {result.data.validation.company_validation.matches.slice(0, 3).map((match, idx) => (
-                                <ValidationMatchCard key={idx} match={match} type="company" />
-                              ))}
+                              {result.data.validation.company_validation.matches?.length > 0 ? (
+                                result.data.validation.company_validation.matches.slice(0, 3).map((match, idx) => (
+                                  <ValidationMatchCard key={idx} match={match} type="company" />
+                                ))
+                              ) : (
+                                result.data?.formd_data && (
+                                  <ExtractedDataCard 
+                                    title="Extracted Form D Company Information (No Matches Found)"
+                                    data={{
+                                      "Consignee's business name": result.data.formd_data["Consignee's business name"],
+                                      "Consignee's address": result.data.formd_data["Consignee's address"],
+                                      "Consignee's country": result.data.formd_data["Consignee's country"]
+                                    }}
+                                  />
+                                )
+                              )}
                             </div>
                           )}
                         </div>
@@ -474,7 +499,6 @@ const DocumentProcessor = () => {
                   </div>
                 )}
 
-                {/* Matching Fields with Values */}
                 {result.data?.comparison?.matching_fields?.length > 0 && (
                   <div className="bg-white rounded-xl shadow-lg p-6">
                     <div className="flex items-center justify-between mb-4">
@@ -492,14 +516,12 @@ const DocumentProcessor = () => {
                           formDValue={field.formd_value}
                           invoiceValue={field.invoice_value}
                           similarity={field.similarity}
-                          fieldName={field.field}
                         />
                       ))}
                     </div>
                   </div>
                 )}
 
-                {/* Discrepancies */}
                 {result.data?.comparison?.discrepancies?.length > 0 && (
                   <div className="bg-white rounded-xl shadow-lg p-6">
                     <h3 className="text-lg font-semibold text-gray-900 mb-4">Discrepancies</h3>
@@ -534,7 +556,6 @@ const DocumentProcessor = () => {
                   </div>
                 )}
 
-                {/* Recommendations */}
                 {result.data?.overall_assessment?.recommendations?.length > 0 && (
                   <div className="bg-white rounded-xl shadow-lg p-6">
                     <h3 className="text-lg font-semibold text-gray-900 mb-4">Recommendations</h3>
