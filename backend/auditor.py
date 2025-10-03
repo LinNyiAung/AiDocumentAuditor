@@ -160,7 +160,7 @@ class DocumentProcessor:
             print(f"Error in extract_image_info: {e}")
             return {"error": str(e)}
 
-    def extract_formd_info(self, formd_pdf_path: str, page_index: int = 0, save_debug_image: bool = True) -> Dict[str, Any]:
+    def extract_formd_info(self, formd_pdf_path: str, page_index: int = 0, save_debug_image: bool = False) -> Dict[str, Any]:
         """Extract information from Form D document"""
         try:
             print(f"Converting Form D PDF to image (page {page_index})...")
@@ -193,7 +193,7 @@ Important:
             print(f"Error extracting Form D info: {e}")
             return {"error": str(e)}
 
-    def extract_bl_info(self, bl_pdf_path: str, page_index: int = 0, crop_bottom_percent: float = 30, save_debug_image: bool = True) -> Dict[str, Any]:
+    def extract_bl_info(self, bl_pdf_path: str, page_index: int = 0, crop_bottom_percent: float = 30, save_debug_image: bool = False) -> Dict[str, Any]:
         """Extract information from BL (Bill of Lading) document"""
         try:
             print(f"Converting BL PDF to image (page {page_index})...")
@@ -239,7 +239,7 @@ Important:
             print(f"Error extracting BL info: {e}")
             return {"error": str(e)}
 
-    def extract_invoice_info(self, invoice_pdf_path: str, page_index: int = 2, rotate_image: bool = True, crop_bottom_percent: float = 30, save_debug_image: bool = True) -> Dict[str, Any]:
+    def extract_invoice_info(self, invoice_pdf_path: str, page_index: int = 2, rotate_image: bool = True, crop_bottom_percent: float = 30, save_debug_image: bool = False) -> Dict[str, Any]:
         """Extract information from invoice document with optional rotation and bottom cropping"""
         try:
             print(f"Converting Invoice PDF to image (page {page_index})...")
@@ -355,6 +355,33 @@ Important:
             similarity = difflib.SequenceMatcher(None, norm_weight1, norm_weight2).ratio()
             return similarity >= threshold, similarity
 
+    def fuzzy_match_number(self, text1: str, text2: str, threshold: float = 0.8) -> Tuple[bool, float]:
+        """Perform fuzzy matching between two texts by extracting and comparing numbers only"""
+        if not text1 or not text2:
+            return False, 0.0
+        
+        # Extract only numbers (including decimals) from both texts
+        num1 = re.sub(r'[^0-9.]', '', str(text1))
+        num2 = re.sub(r'[^0-9.]', '', str(text2))
+        
+        if not num1 or not num2:
+            return False, 0.0
+        
+        # For numerical comparison, check if they're exactly the same
+        try:
+            val1 = float(num1)
+            val2 = float(num2)
+            if val1 == val2:
+                return True, 1.0
+            # Allow for small numerical differences
+            diff = abs(val1 - val2) / max(val1, val2) if max(val1, val2) != 0 else 0
+            similarity = 1.0 - diff
+            return similarity >= threshold, similarity
+        except ValueError:
+            # Fall back to string comparison if not numeric
+            similarity = difflib.SequenceMatcher(None, num1, num2).ratio()
+            return similarity >= threshold, similarity
+
     def fuzzy_match_description(self, desc1: str, desc2: str, threshold: float = 0.8) -> Tuple[bool, float]:
         """Perform fuzzy matching between two descriptions using normalized descriptions"""
         if not desc1 or not desc2:
@@ -369,8 +396,8 @@ Important:
         similarity = difflib.SequenceMatcher(None, norm_desc1, norm_desc2).ratio()
         return similarity >= threshold, similarity
 
-    def compare_documents(self, formd_data: Dict[str, Any], invoice_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Compare Form D and invoice data to determine if they are related"""
+    def compare_documents(self, formd_data: Dict[str, Any], invoice_data: Dict[str, Any], bl_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Compare Form D, invoice, and BL data to determine if they are related"""
         comparison_result = {
             "documents_related": False,
             "matching_fields": [],
@@ -379,46 +406,103 @@ Important:
             "total_fields_compared": 0
         }
         
-        # Define field mappings between Form D and invoice with specific comparison types
-        field_mappings = [
-            ("Exporter's business name", "shipped_by_name", "general"),
-            ("Consignee's business name", "ship_to_name", "general"),  
-            ("Consignee's address", "ship_to_address", "general"),  
-            ("Gross weight", "total_gross_weight_kgs", "weight"),
-            ("Number of invoices", "number", "general"),
-            ("Date of invoices", "invoice_date", "general"),
+        # Define three-way field mappings: (formd_field, invoice_field, bl_field, comparison_type)
+        three_way_mappings = [
+            ("Consignee's business name", "ship_to_name", "consignee_name", "general"),
+            ("Consignee's address", "ship_to_address", "consignee_address", "general"),
+            ("Exporter's business name", "shipped_by_name", "shipper_name", "general"),
+            ("Exporter's address", "shipped_by_address", "shipper_address", "general"),
+            ("Gross weight", "total_gross_weight_kgs", "gross_weight", "weight"),
+            ("CTNS", "packed_in", "number_of_cartons", "number"),
+        ]
+        
+        # Define two-way field mappings: (invoice_field, bl_field, comparison_type)
+        two_way_mappings = [
+            ("shipment_number", "shipment_number", "general"),
         ]
         
         matches = 0
         total_comparisons = 0
         
-        for formd_field, invoice_field, comparison_type in field_mappings:
-            if formd_field in formd_data and invoice_field in invoice_data:
+        # Process three-way comparisons (Form D, Invoice, BL)
+        for formd_field, invoice_field, bl_field, comparison_type in three_way_mappings:
+            if formd_field in formd_data and invoice_field in invoice_data and bl_field in bl_data:
                 total_comparisons += 1
                 formd_val = formd_data[formd_field]
                 invoice_val = invoice_data[invoice_field]
+                bl_val = bl_data[bl_field]
                 
                 # Use appropriate comparison method based on field type
                 if comparison_type == "weight":
-                    is_match, similarity = self.fuzzy_match_weight(str(formd_val), str(invoice_val))
-                elif comparison_type == "description":
-                    is_match, similarity = self.fuzzy_match_description(str(formd_val), str(invoice_val))
+                    match1, sim1 = self.fuzzy_match_weight(str(formd_val), str(invoice_val))
+                    match2, sim2 = self.fuzzy_match_weight(str(formd_val), str(bl_val))
+                    match3, sim3 = self.fuzzy_match_weight(str(invoice_val), str(bl_val))
+                elif comparison_type == "number":
+                    # Extract numbers only for comparison
+                    match1, sim1 = self.fuzzy_match_number(str(formd_val), str(invoice_val))
+                    match2, sim2 = self.fuzzy_match_number(str(formd_val), str(bl_val))
+                    match3, sim3 = self.fuzzy_match_number(str(invoice_val), str(bl_val))
                 else:
-                    is_match, similarity = self.fuzzy_match(str(formd_val), str(invoice_val))
+                    match1, sim1 = self.fuzzy_match(str(formd_val), str(invoice_val))
+                    match2, sim2 = self.fuzzy_match(str(formd_val), str(bl_val))
+                    match3, sim3 = self.fuzzy_match(str(invoice_val), str(bl_val))
+                
+                # Calculate average similarity across all three documents
+                avg_similarity = (sim1 + sim2 + sim3) / 3
+                all_match = match1 and match2 and match3
+                
+                if all_match:
+                    matches += 1
+                    comparison_result["matching_fields"].append({
+                        "field": f"{formd_field} / {invoice_field} / {bl_field}",
+                        "formd_value": formd_val,
+                        "invoice_value": invoice_val,
+                        "bl_value": bl_val,
+                        "similarity": round(avg_similarity, 3),
+                        "avg_similarity": round(avg_similarity, 3),
+                        "formd_invoice_sim": round(sim1, 3),
+                        "formd_bl_sim": round(sim2, 3),
+                        "invoice_bl_sim": round(sim3, 3)
+                    })
+                elif avg_similarity > 0.1:  # Still record partial matches
+                    comparison_result["discrepancies"].append({
+                        "field": f"{formd_field} / {invoice_field} / {bl_field}",
+                        "formd_value": formd_val,
+                        "invoice_value": invoice_val,
+                        "bl_value": bl_val,
+                        "similarity": round(avg_similarity, 3),
+                        "avg_similarity": round(avg_similarity, 3),
+                        "formd_invoice_sim": round(sim1, 3),
+                        "formd_bl_sim": round(sim2, 3),
+                        "invoice_bl_sim": round(sim3, 3)
+                    })
+        
+        # Process two-way comparisons (Invoice and BL only)
+        for invoice_field, bl_field, comparison_type in two_way_mappings:
+            if invoice_field in invoice_data and bl_field in bl_data:
+                total_comparisons += 1
+                invoice_val = invoice_data[invoice_field]
+                bl_val = bl_data[bl_field]
+                
+                # Use appropriate comparison method
+                if comparison_type == "general":
+                    is_match, similarity = self.fuzzy_match(str(invoice_val), str(bl_val))
+                else:
+                    is_match, similarity = self.fuzzy_match(str(invoice_val), str(bl_val))
                 
                 if is_match:
                     matches += 1
                     comparison_result["matching_fields"].append({
-                        "field": f"{formd_field} / {invoice_field}",
-                        "formd_value": formd_val,
+                        "field": f"{invoice_field} / {bl_field}",
                         "invoice_value": invoice_val,
+                        "bl_value": bl_val,
                         "similarity": round(similarity, 3)
                     })
                 elif similarity > 0.3:  # Still record partial matches
                     comparison_result["discrepancies"].append({
-                        "field": f"{formd_field} / {invoice_field}",
-                        "formd_value": formd_val,
+                        "field": f"{invoice_field} / {bl_field}",
                         "invoice_value": invoice_val,
+                        "bl_value": bl_val,
                         "similarity": round(similarity, 3)
                     })
         
@@ -604,10 +688,10 @@ Important:
         
         return validation_result
 
-    def process_documents(self, formd_pdf_path: str, invoice_pdf_path: str, bl_pdf_path: str = None, 
+    def process_documents(self, formd_pdf_path: str, invoice_pdf_path: str, bl_pdf_path: str, 
                          formd_page: int = 0, invoice_page: int = 2, bl_page: int = 0,
                          rotate_invoice: bool = True, crop_bottom_percent: float = 30) -> Dict[str, Any]:
-        """Process Form D, invoice, and optionally BL files, compare them, and validate against CSV data"""
+        """Process Form D, invoice, and BL files, compare them, and validate against CSV data"""
         try:
             print("="*60)
             print("EXTRACTING FORM D INFORMATION")
@@ -623,8 +707,6 @@ Important:
             print("Invoice Data:")
             print(json.dumps(invoice_data, indent=2))
             
-            # Extract BL information if BL file is provided
-            
             print("\n" + "="*60)
             print("EXTRACTING BL (BILL OF LADING) INFORMATION")
             print("="*60)
@@ -635,7 +717,7 @@ Important:
             print("\n" + "="*60)
             print("COMPARING DOCUMENTS")
             print("="*60)
-            comparison_result = self.compare_documents(formd_data, invoice_data)
+            comparison_result = self.compare_documents(formd_data, invoice_data, bl_data)
             print("Comparison Result:")
             print(json.dumps(comparison_result, indent=2))
             
@@ -735,7 +817,9 @@ Important:
         if comparison.get("matching_fields"):
             print(f"\nMatching Fields ({len(comparison['matching_fields'])}):")
             for match in comparison["matching_fields"]:
-                print(f"  • {match['field']}: {match['similarity']:.1%} similarity")
+                # Use 'similarity' key which exists in both two-way and three-way comparisons
+                sim_score = match.get('similarity', 0)
+                print(f"  • {match['field']}: {sim_score:.1%} similarity")
         
         # Print validation details
         print(f"\nValidation Results:")
@@ -764,24 +848,24 @@ Important:
         print(f"\nSummary: {overall.get('summary', 'No summary available')}")
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: python document_processor.py <formd_pdf_path> <invoice_pdf_path> [bl_pdf_path] [formd_page] [invoice_page] [bl_page] [api_key] [model] [--no-rotate] [--crop-bottom=X]")
-        print("Example: python document_processor.py formd.pdf invoice.pdf bl.pdf 0 0 0")
-        print("Example without BL: python document_processor.py formd.pdf invoice.pdf")
-        print("Example with API key: python document_processor.py formd.pdf invoice.pdf bl.pdf 0 0 0 your_api_key")
-        print("Example with custom model: python document_processor.py formd.pdf invoice.pdf bl.pdf 0 0 0 your_api_key gpt-4o-mini")
-        print("Example without rotation: python document_processor.py formd.pdf invoice.pdf bl.pdf 0 0 0 your_api_key gpt-4o --no-rotate")
-        print("Example with bottom cropping: python document_processor.py formd.pdf invoice.pdf bl.pdf 0 0 0 your_api_key gpt-4o --crop-bottom=15")
+    if len(sys.argv) < 4:
+        print("Usage: python auditor.py <formd_pdf_path> <invoice_pdf_path> <bl_pdf_path> [formd_page] [invoice_page] [bl_page] [api_key] [model] [--no-rotate] [--crop-bottom=X]")
+        print("Example: python auditor.py formd.pdf invoice.pdf bl.pdf 0 2 0")
+        print("Example with API key: python auditor.py formd.pdf invoice.pdf bl.pdf 0 2 0 your_api_key")
+        print("Example with custom model: python auditor.py formd.pdf invoice.pdf bl.pdf 0 2 0 your_api_key gpt-4o-mini")
+        print("Example without rotation: python auditor.py formd.pdf invoice.pdf bl.pdf 0 2 0 your_api_key gpt-4o --no-rotate")
+        print("Example with bottom cropping: python auditor.py formd.pdf invoice.pdf bl.pdf 0 2 0 your_api_key gpt-4o --crop-bottom=15")
         print("\nNote: If no API key is provided, OPENAI_API_KEY environment variable will be used")
         print("Note: By default, invoice images are rotated 90 degrees clockwise. Use --no-rotate to disable.")
         print("Note: By default, 30% of the bottom is cropped for BL and invoice. Use --crop-bottom=X to set percentage (0 to disable).")
+        print("\nNote: BL (Bill of Lading) PDF is now REQUIRED")
         sys.exit(1)
     
     formd_pdf_path = sys.argv[1]
     invoice_pdf_path = sys.argv[2]
+    bl_pdf_path = sys.argv[3]
     
     # Initialize default values
-
     formd_page = 0
     invoice_page = 2
     bl_page = 0
@@ -791,7 +875,7 @@ def main():
     crop_bottom_percent = 30.0  # Default 30% crop
     
     # Parse arguments
-    arg_index = 3
+    arg_index = 4
     positional_index = 0  # Track which positional argument we're on
     
     while arg_index < len(sys.argv):
@@ -810,42 +894,24 @@ def main():
                 crop_bottom_percent = 30.0
         else:
             # Handle positional arguments
-            if positional_index == 0:  # bl_pdf_path or formd_page
-                # Check if it's a file path (contains .pdf) or a number
-                if '.pdf' in arg.lower():
-                    bl_pdf_path = arg
-                else:
-                    try:
-                        formd_page = int(arg)
-                    except ValueError:
-                        print(f"Warning: Invalid argument '{arg}'. Skipping.")
-            elif positional_index == 1:  # formd_page or invoice_page
+            if positional_index == 0:  # formd_page
                 try:
-                    if bl_pdf_path:
-                        formd_page = int(arg)
-                    else:
-                        invoice_page = int(arg)
+                    formd_page = int(arg)
                 except ValueError:
-                    print(f"Warning: Invalid page number '{arg}'. Using default.")
-            elif positional_index == 2:  # invoice_page or bl_page
+                    print(f"Warning: Invalid formd_page '{arg}'. Using default 0.")
+            elif positional_index == 1:  # invoice_page
                 try:
-                    if bl_pdf_path:
-                        invoice_page = int(arg)
-                    else:
-                        api_key = arg
+                    invoice_page = int(arg)
                 except ValueError:
-                    print(f"Warning: Invalid argument '{arg}'.")
-            elif positional_index == 3:  # bl_page or api_key
-                if bl_pdf_path:
-                    try:
-                        bl_page = int(arg)
-                    except ValueError:
-                        api_key = arg
-                else:
-                    model = arg
-            elif positional_index == 4:  # api_key
+                    print(f"Warning: Invalid invoice_page '{arg}'. Using default 2.")
+            elif positional_index == 2:  # bl_page
+                try:
+                    bl_page = int(arg)
+                except ValueError:
+                    print(f"Warning: Invalid bl_page '{arg}'. Using default 0.")
+            elif positional_index == 3:  # api_key
                 api_key = arg
-            elif positional_index == 5:  # model
+            elif positional_index == 4:  # model
                 model = arg
             
             positional_index += 1
@@ -861,14 +927,14 @@ def main():
         print(f"Error: Invoice file not found: {invoice_pdf_path}")
         sys.exit(1)
     
-    if bl_pdf_path and not os.path.exists(bl_pdf_path):
+    if not os.path.exists(bl_pdf_path):
         print(f"Error: BL file not found: {bl_pdf_path}")
         sys.exit(1)
     
     # Check if API key is available
     if not api_key and not os.getenv('OPENAI_API_KEY'):
         print("Error: OpenAI API key not provided. Please either:")
-        print("1. Pass API key as argument: python document_processor.py ... your_api_key")
+        print("1. Pass API key as argument: python auditor.py ... your_api_key")
         print("2. Set OPENAI_API_KEY environment variable")
         sys.exit(1)
     
