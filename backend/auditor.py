@@ -160,7 +160,7 @@ class DocumentProcessor:
             print(f"Error in extract_image_info: {e}")
             return {"error": str(e)}
 
-    def extract_formd_info(self, formd_pdf_path: str, page_index: int = 0) -> Dict[str, Any]:
+    def extract_formd_info(self, formd_pdf_path: str, page_index: int = 0, save_debug_image: bool = True) -> Dict[str, Any]:
         """Extract information from Form D document"""
         try:
             print(f"Converting Form D PDF to image (page {page_index})...")
@@ -171,7 +171,13 @@ class DocumentProcessor:
             
             image = images[page_index]
             
-            question = """Retrieve these information from the document: Exporter's business name, Exporter's address, Exporter's country, Consignee's business name, Consignee's address, Consignee's country, Item Number, HS CODE, Product Description, Gross weight, Number of invoices, Date of invoices
+            # Save debug image
+            if save_debug_image:
+                debug_filename = f"debug_formd_page{page_index}.png"
+                image.save(debug_filename)
+                print(f"Debug image saved: {debug_filename}")
+            
+            question = """Retrieve these information from the document: Exporter's business name, Exporter's address, Exporter's country, Consignee's business name, Consignee's address, Consignee's country, Item Number, HS CODE, Product Description, CTNS, Gross weight, Number of invoices, Date of invoices
 
 Important:
 - Do not include the unnecessary information
@@ -187,7 +193,53 @@ Important:
             print(f"Error extracting Form D info: {e}")
             return {"error": str(e)}
 
-    def extract_invoice_info(self, invoice_pdf_path: str, page_index: int = 2, rotate_image: bool = True, crop_bottom_percent: float = 25) -> Dict[str, Any]:
+    def extract_bl_info(self, bl_pdf_path: str, page_index: int = 0, crop_bottom_percent: float = 30, save_debug_image: bool = True) -> Dict[str, Any]:
+        """Extract information from BL (Bill of Lading) document"""
+        try:
+            print(f"Converting BL PDF to image (page {page_index})...")
+            images = convert_from_path(bl_pdf_path, dpi=300)
+            
+            if page_index >= len(images):
+                raise ValueError(f"Page {page_index} not found. BL PDF has {len(images)} pages.")
+            
+            image = images[page_index]
+            
+            # Crop bottom portion of the image if requested
+            if crop_bottom_percent > 0:
+                width, height = image.size
+                crop_pixels = int(height * crop_bottom_percent / 100)
+                
+                # Crop from top-left (0,0) to bottom-right, but exclude bottom portion
+                cropped_height = height - crop_pixels
+                print(f"Cropping {crop_bottom_percent}% ({crop_pixels} pixels) from bottom. New height: {cropped_height}")
+                
+                # Crop box: (left, top, right, bottom)
+                crop_box = (0, 0, width, cropped_height)
+                image = image.crop(crop_box)
+            
+            # Save debug image
+            if save_debug_image:
+                debug_filename = f"debug_bl_page{page_index}_cropped.png"
+                image.save(debug_filename)
+                print(f"Debug image saved: {debug_filename}")
+            
+            question = """Retrieve these information from the Bill of Lading document: shipper name, shipper address, consignee name, consignee address, notify party name, notify party address, shipment number, port of loading, marks and numbers, description of goods, number of cartons, gross weight
+
+Important:
+- Do not include the unnecessary information
+- Only extract the required information
+- Extract information exactly as it appears in the document
+- If information is not found, use "Not found" as the value
+- Return only valid JSON format
+- Do not include any explanations or additional text"""
+            
+            return self.extract_image_info(image, question)
+            
+        except Exception as e:
+            print(f"Error extracting BL info: {e}")
+            return {"error": str(e)}
+
+    def extract_invoice_info(self, invoice_pdf_path: str, page_index: int = 2, rotate_image: bool = True, crop_bottom_percent: float = 30, save_debug_image: bool = True) -> Dict[str, Any]:
         """Extract information from invoice document with optional rotation and bottom cropping"""
         try:
             print(f"Converting Invoice PDF to image (page {page_index})...")
@@ -216,7 +268,14 @@ Important:
                 crop_box = (0, 0, width, cropped_height)
                 image = image.crop(crop_box)
             
-            question = """Retrieve these information from the invoice in the image: sold to name, sold to address, ship to name, ship to address, shipped by name, shipped by address, shipment number, number, invoice date, description, total quantity, price per one, total price, packed in, total gross weight kgs, total net weight kgs, total cubic meters
+            # Save debug image
+            if save_debug_image:
+                rotation_text = "rotated_" if rotate_image else ""
+                debug_filename = f"debug_invoice_page{page_index}_{rotation_text}cropped.png"
+                image.save(debug_filename)
+                print(f"Debug image saved: {debug_filename}")
+            
+            question = """Retrieve these information from the invoice in the image: sold to name, sold to address, ship to name, ship to address, shipped by name, shipped by address, shipment number, number, invoice date, description, total quantity, price per one, total price, packed in, total gross weight kgs, total net weight kgs, total cubic meters, loaded in
 
     Important:
     - Do not include the unnecessary information
@@ -545,8 +604,10 @@ Important:
         
         return validation_result
 
-    def process_documents(self, formd_pdf_path: str, invoice_pdf_path: str, formd_page: int = 0, invoice_page: int = 2, rotate_invoice: bool = True, crop_bottom_percent: float = 25) -> Dict[str, Any]:
-        """Process both Form D and invoice files, compare them, and validate against CSV data"""
+    def process_documents(self, formd_pdf_path: str, invoice_pdf_path: str, bl_pdf_path: str = None, 
+                         formd_page: int = 0, invoice_page: int = 2, bl_page: int = 0,
+                         rotate_invoice: bool = True, crop_bottom_percent: float = 30) -> Dict[str, Any]:
+        """Process Form D, invoice, and optionally BL files, compare them, and validate against CSV data"""
         try:
             print("="*60)
             print("EXTRACTING FORM D INFORMATION")
@@ -561,6 +622,15 @@ Important:
             invoice_data = self.extract_invoice_info(invoice_pdf_path, invoice_page, rotate_invoice, crop_bottom_percent)
             print("Invoice Data:")
             print(json.dumps(invoice_data, indent=2))
+            
+            # Extract BL information if BL file is provided
+            
+            print("\n" + "="*60)
+            print("EXTRACTING BL (BILL OF LADING) INFORMATION")
+            print("="*60)
+            bl_data = self.extract_bl_info(bl_pdf_path, bl_page, crop_bottom_percent)
+            print("BL Data:")
+            print(json.dumps(bl_data, indent=2))
             
             print("\n" + "="*60)
             print("COMPARING DOCUMENTS")
@@ -580,6 +650,7 @@ Important:
             final_result = {
                 "formd_data": formd_data,
                 "invoice_data": invoice_data,
+                "bl_data": bl_data,
                 "comparison": comparison_result,
                 "validation": validation_result,
                 "overall_assessment": self.generate_overall_assessment(comparison_result, validation_result)
@@ -664,7 +735,7 @@ Important:
         if comparison.get("matching_fields"):
             print(f"\nMatching Fields ({len(comparison['matching_fields'])}):")
             for match in comparison["matching_fields"]:
-                print(f"  â€¢ {match['field']}: {match['similarity']:.1%} similarity")
+                print(f"  • {match['field']}: {match['similarity']:.1%} similarity")
         
         # Print validation details
         print(f"\nValidation Results:")
@@ -672,13 +743,13 @@ Important:
         company_val = validation.get("company_validation", {})
         
         
-        print(f"  â€¢ Product Validation: {'PASS' if product_val.get('found_matches') else 'FAIL'}")
+        print(f"  • Product Validation: {'PASS' if product_val.get('found_matches') else 'FAIL'}")
         if product_val.get("matches"):
             best_product = product_val["matches"][0]
             print(f"    - Best match: {best_product.get('description_similarity', 0):.1%} description similarity")
             print(f"    - HS Code match: {'YES' if best_product.get('hs_code_match') else 'NO'}")
         
-        print(f"  â€¢ Company Validation: {'PASS' if company_val.get('found_matches') else 'FAIL'}")
+        print(f"  • Company Validation: {'PASS' if company_val.get('found_matches') else 'FAIL'}")
         if company_val.get("matches"):
             best_company = company_val["matches"][0]
             print(f"    - Best match: {best_company.get('company_name_similarity', 0):.1%} name similarity")
@@ -688,36 +759,41 @@ Important:
         if overall.get("recommendations"):
             print(f"\nRecommendations:")
             for rec in overall["recommendations"]:
-                print(f"  â€¢ {rec}")
+                print(f"  • {rec}")
         
         print(f"\nSummary: {overall.get('summary', 'No summary available')}")
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python document_processor.py <formd_pdf_path> <invoice_pdf_path> [formd_page] [invoice_page] [api_key] [model] [--no-rotate] [--crop-bottom=X]")
-        print("Example: python document_processor.py formd.pdf invoice.pdf 0 0")
-        print("Example with API key: python document_processor.py formd.pdf invoice.pdf 0 0 your_api_key")
-        print("Example with custom model: python document_processor.py formd.pdf invoice.pdf 0 0 your_api_key gpt-4o-mini")
-        print("Example without rotation: python document_processor.py formd.pdf invoice.pdf 0 0 your_api_key gpt-4o --no-rotate")
-        print("Example with bottom cropping: python document_processor.py formd.pdf invoice.pdf 0 0 your_api_key gpt-4o --crop-bottom=15")
+        print("Usage: python document_processor.py <formd_pdf_path> <invoice_pdf_path> [bl_pdf_path] [formd_page] [invoice_page] [bl_page] [api_key] [model] [--no-rotate] [--crop-bottom=X]")
+        print("Example: python document_processor.py formd.pdf invoice.pdf bl.pdf 0 0 0")
+        print("Example without BL: python document_processor.py formd.pdf invoice.pdf")
+        print("Example with API key: python document_processor.py formd.pdf invoice.pdf bl.pdf 0 0 0 your_api_key")
+        print("Example with custom model: python document_processor.py formd.pdf invoice.pdf bl.pdf 0 0 0 your_api_key gpt-4o-mini")
+        print("Example without rotation: python document_processor.py formd.pdf invoice.pdf bl.pdf 0 0 0 your_api_key gpt-4o --no-rotate")
+        print("Example with bottom cropping: python document_processor.py formd.pdf invoice.pdf bl.pdf 0 0 0 your_api_key gpt-4o --crop-bottom=15")
         print("\nNote: If no API key is provided, OPENAI_API_KEY environment variable will be used")
         print("Note: By default, invoice images are rotated 90 degrees clockwise. Use --no-rotate to disable.")
-        print("Note: By default, 10% of the bottom is cropped. Use --crop-bottom=X to set percentage (0 to disable).")
+        print("Note: By default, 30% of the bottom is cropped for BL and invoice. Use --crop-bottom=X to set percentage (0 to disable).")
         sys.exit(1)
     
     formd_pdf_path = sys.argv[1]
     invoice_pdf_path = sys.argv[2]
     
     # Initialize default values
+
     formd_page = 0
     invoice_page = 2
+    bl_page = 0
     api_key = None
     model = "gpt-4o"
     rotate_invoice = True
-    crop_bottom_percent = 25.0  # Default 10% crop
+    crop_bottom_percent = 30.0  # Default 30% crop
     
     # Parse arguments
     arg_index = 3
+    positional_index = 0  # Track which positional argument we're on
+    
     while arg_index < len(sys.argv):
         arg = sys.argv[arg_index]
         
@@ -727,25 +803,52 @@ def main():
             try:
                 crop_bottom_percent = float(arg.split('=')[1])
                 if crop_bottom_percent < 0 or crop_bottom_percent > 50:
-                    print("Warning: crop-bottom percentage should be between 0 and 50. Using default 10%.")
-                    crop_bottom_percent = 25.0
+                    print("Warning: crop-bottom percentage should be between 0 and 50. Using default 30%.")
+                    crop_bottom_percent = 30.0
             except ValueError:
-                print("Warning: Invalid crop-bottom value. Using default 10%.")
-                crop_bottom_percent = 25.0
-        elif arg_index == 3:  # formd_page
-            try:
-                formd_page = int(arg)
-            except ValueError:
-                print(f"Warning: Invalid formd_page '{arg}'. Using default 0.")
-        elif arg_index == 4:  # invoice_page
-            try:
-                invoice_page = int(arg)
-            except ValueError:
-                print(f"Warning: Invalid invoice_page '{arg}'. Using default 0.")
-        elif arg_index == 5:  # api_key
-            api_key = arg
-        elif arg_index == 6:  # model
-            model = arg
+                print("Warning: Invalid crop-bottom value. Using default 30%.")
+                crop_bottom_percent = 30.0
+        else:
+            # Handle positional arguments
+            if positional_index == 0:  # bl_pdf_path or formd_page
+                # Check if it's a file path (contains .pdf) or a number
+                if '.pdf' in arg.lower():
+                    bl_pdf_path = arg
+                else:
+                    try:
+                        formd_page = int(arg)
+                    except ValueError:
+                        print(f"Warning: Invalid argument '{arg}'. Skipping.")
+            elif positional_index == 1:  # formd_page or invoice_page
+                try:
+                    if bl_pdf_path:
+                        formd_page = int(arg)
+                    else:
+                        invoice_page = int(arg)
+                except ValueError:
+                    print(f"Warning: Invalid page number '{arg}'. Using default.")
+            elif positional_index == 2:  # invoice_page or bl_page
+                try:
+                    if bl_pdf_path:
+                        invoice_page = int(arg)
+                    else:
+                        api_key = arg
+                except ValueError:
+                    print(f"Warning: Invalid argument '{arg}'.")
+            elif positional_index == 3:  # bl_page or api_key
+                if bl_pdf_path:
+                    try:
+                        bl_page = int(arg)
+                    except ValueError:
+                        api_key = arg
+                else:
+                    model = arg
+            elif positional_index == 4:  # api_key
+                api_key = arg
+            elif positional_index == 5:  # model
+                model = arg
+            
+            positional_index += 1
         
         arg_index += 1
     
@@ -756,6 +859,10 @@ def main():
     
     if not os.path.exists(invoice_pdf_path):
         print(f"Error: Invoice file not found: {invoice_pdf_path}")
+        sys.exit(1)
+    
+    if bl_pdf_path and not os.path.exists(bl_pdf_path):
+        print(f"Error: BL file not found: {bl_pdf_path}")
         sys.exit(1)
     
     # Check if API key is available
@@ -771,15 +878,18 @@ def main():
         print(f"Processing settings:")
         print(f"  - Form D page: {formd_page}")
         print(f"  - Invoice page: {invoice_page}")
+        print(f"  - BL page: {bl_page}")
         print(f"  - Rotate invoice: {'Yes' if rotate_invoice else 'No'}")
         print(f"  - Crop bottom: {crop_bottom_percent}%")
         print(f"  - Model: {model}")
         
         result = processor.process_documents(
             formd_pdf_path, 
-            invoice_pdf_path, 
+            invoice_pdf_path,
+            bl_pdf_path,
             formd_page, 
-            invoice_page, 
+            invoice_page,
+            bl_page,
             rotate_invoice, 
             crop_bottom_percent
         )
@@ -790,7 +900,8 @@ def main():
         # Save results to file
         base_name = os.path.splitext(os.path.basename(formd_pdf_path))[0]
         invoice_base = os.path.splitext(os.path.basename(invoice_pdf_path))[0]
-        output_file = f"document_analysis_{base_name}_vs_{invoice_base}.json"
+        bl_base = os.path.splitext(os.path.basename(bl_pdf_path))[0]
+        output_file = f"document_analysis_{base_name}_vs_{invoice_base}_vs_{bl_base}.json"
         
         try:
             with open(output_file, 'w', encoding='utf-8') as f:
