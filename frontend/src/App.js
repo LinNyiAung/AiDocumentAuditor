@@ -4,6 +4,7 @@ import { Upload, FileText, CheckCircle, XCircle, AlertCircle, Loader2, Download,
 const DocumentProcessor = () => {
   const [formDFile, setFormDFile] = useState(null);
   const [invoiceFile, setInvoiceFile] = useState(null);
+  const [blFile, setBlFile] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -21,8 +22,10 @@ const DocumentProcessor = () => {
     if (file && file.type === 'application/pdf') {
       if (fileType === 'formD') {
         setFormDFile(file);
-      } else {
+      } else if (fileType === 'invoice') {
         setInvoiceFile(file);
+      } else if (fileType === 'bl') {
+        setBlFile(file);
       }
       setError(null);
     } else {
@@ -31,8 +34,8 @@ const DocumentProcessor = () => {
   };
 
   const handleSubmit = async () => {
-    if (!formDFile || !invoiceFile) {
-      setError('Please select both Form D and Invoice PDF files');
+    if (!formDFile || !invoiceFile || !blFile) {
+      setError('Please select all three PDF files: Form D, Invoice, and BL');
       return;
     }
 
@@ -43,6 +46,7 @@ const DocumentProcessor = () => {
     const formData = new FormData();
     formData.append('formd_pdf', formDFile);
     formData.append('invoice_pdf', invoiceFile);
+    formData.append('bl_pdf', blFile);
 
     try {
       const response = await fetch('http://localhost:8000/process-documents-simple', {
@@ -124,30 +128,62 @@ const DocumentProcessor = () => {
     </div>
   );
 
-  const ValueComparisonCard = ({ title, formDValue, invoiceValue, similarity }) => (
+  const ThreeWayComparisonCard = ({ field }) => (
     <div className="border rounded-lg p-4 bg-gray-50">
       <div className="flex justify-between items-start mb-3">
-        <h5 className="font-medium text-gray-900">{title}</h5>
-        <span className="text-sm text-blue-700 bg-blue-100 px-2 py-1 rounded">
-          {(similarity * 100).toFixed(1)}% match
-        </span>
+        <h5 className="font-medium text-gray-900">{field.field}</h5>
+        <div className="flex flex-col items-end space-y-1">
+          <span className="text-xs text-blue-700 bg-blue-100 px-2 py-1 rounded">
+            Avg: {((field.avg_similarity || field.similarity) * 100).toFixed(1)}%
+          </span>
+        </div>
       </div>
       
       <div className="space-y-3">
-        <div>
-          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Form D Value:</span>
-          <div className="mt-1 p-2 bg-white rounded border text-sm">
-            {formDValue || 'Not found'}
+        {field.formd_value !== undefined && (
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Form D:</span>
+            <div className="mt-1 p-2 bg-white rounded border text-sm">
+              {field.formd_value || 'Not found'}
+            </div>
           </div>
-        </div>
+        )}
         
-        <div>
-          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Invoice Value:</span>
-          <div className="mt-1 p-2 bg-white rounded border text-sm">
-            {invoiceValue || 'Not found'}
+        {field.invoice_value !== undefined && (
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Invoice:</span>
+            <div className="mt-1 p-2 bg-white rounded border text-sm">
+              {field.invoice_value || 'Not found'}
+            </div>
+          </div>
+        )}
+        
+        {field.bl_value !== undefined && (
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">BL:</span>
+            <div className="mt-1 p-2 bg-white rounded border text-sm">
+              {field.bl_value || 'Not found'}
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {field.formd_invoice_sim !== undefined && (
+        <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+          <div className="text-center p-1 bg-blue-50 rounded">
+            <div className="text-gray-500">F↔I</div>
+            <div className="font-medium">{(field.formd_invoice_sim * 100).toFixed(0)}%</div>
+          </div>
+          <div className="text-center p-1 bg-blue-50 rounded">
+            <div className="text-gray-500">F↔B</div>
+            <div className="font-medium">{(field.formd_bl_sim * 100).toFixed(0)}%</div>
+          </div>
+          <div className="text-center p-1 bg-blue-50 rounded">
+            <div className="text-gray-500">I↔B</div>
+            <div className="font-medium">{(field.invoice_bl_sim * 100).toFixed(0)}%</div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 
@@ -232,13 +268,6 @@ const DocumentProcessor = () => {
           </div>
           
           <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Form D Address:</span>
-            <div className="mt-1 p-2 bg-white rounded border text-sm">
-              {match.formd_consignee_address || 'Not found'}
-            </div>
-          </div>
-          
-          <div>
             <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Combined Form D Info:</span>
             <div className="mt-1 p-2 bg-white rounded border text-sm">
               {match.combined_formd_info || 'Not found'}
@@ -251,12 +280,6 @@ const DocumentProcessor = () => {
               {match.csv_address || 'Not found'}
             </div>
           </div>
-          
-          {match.address_similarity !== undefined && (
-            <div className="text-xs text-gray-600">
-              Address similarity: {(match.address_similarity * 100).toFixed(1)}%
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -264,10 +287,10 @@ const DocumentProcessor = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-900 mb-2">Document Processor</h1>
-          <p className="text-lg text-gray-600">Upload Form D and Invoice PDFs for AI-powered analysis</p>
+          <p className="text-lg text-gray-600">Upload Form D, Invoice, and BL PDFs for AI-powered analysis</p>
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
@@ -293,11 +316,11 @@ const DocumentProcessor = () => {
                     />
                     <label
                       htmlFor="formD"
-                      className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 hover:border-gray-400 transition-colors"
+                      className="flex flex-col items-center justify-center w-full h-28 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 hover:border-gray-400 transition-colors"
                     >
-                      <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                        <FileText className="w-8 h-8 text-gray-400 mb-2" />
-                        <p className="text-sm text-gray-500">
+                      <div className="flex flex-col items-center justify-center pt-4 pb-5">
+                        <FileText className="w-7 h-7 text-gray-400 mb-2" />
+                        <p className="text-sm text-gray-500 text-center px-2">
                           {formDFile ? formDFile.name : 'Click to upload Form D'}
                         </p>
                       </div>
@@ -319,12 +342,38 @@ const DocumentProcessor = () => {
                     />
                     <label
                       htmlFor="invoice"
-                      className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 hover:border-gray-400 transition-colors"
+                      className="flex flex-col items-center justify-center w-full h-28 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 hover:border-gray-400 transition-colors"
                     >
-                      <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                        <FileText className="w-8 h-8 text-gray-400 mb-2" />
-                        <p className="text-sm text-gray-500">
+                      <div className="flex flex-col items-center justify-center pt-4 pb-5">
+                        <FileText className="w-7 h-7 text-gray-400 mb-2" />
+                        <p className="text-sm text-gray-500 text-center px-2">
                           {invoiceFile ? invoiceFile.name : 'Click to upload Invoice'}
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    BL (Bill of Lading) PDF
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="file"
+                      accept=".pdf"
+                      onChange={(e) => handleFileChange(e, 'bl')}
+                      className="hidden"
+                      id="bl"
+                    />
+                    <label
+                      htmlFor="bl"
+                      className="flex flex-col items-center justify-center w-full h-28 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 hover:border-gray-400 transition-colors"
+                    >
+                      <div className="flex flex-col items-center justify-center pt-4 pb-5">
+                        <FileText className="w-7 h-7 text-gray-400 mb-2" />
+                        <p className="text-sm text-gray-500 text-center px-2">
+                          {blFile ? blFile.name : 'Click to upload BL'}
                         </p>
                       </div>
                     </label>
@@ -333,7 +382,7 @@ const DocumentProcessor = () => {
 
                 <button
                   onClick={handleSubmit}
-                  disabled={!formDFile || !invoiceFile || isProcessing}
+                  disabled={!formDFile || !invoiceFile || !blFile || isProcessing}
                   className="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
                 >
                   {isProcessing ? (
@@ -348,7 +397,7 @@ const DocumentProcessor = () => {
               </div>
 
               {error && (
-                <div className="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+                <div className="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
                   {error}
                 </div>
               )}
@@ -363,7 +412,7 @@ const DocumentProcessor = () => {
                     <h2 className="text-xl font-semibold text-gray-900">Analysis Summary</h2>
                     <button
                       onClick={downloadResults}
-                      className="flex items-center px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                      className="flex items-center px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-sm"
                     >
                       <Download className="w-4 h-4 mr-2" />
                       Download
@@ -502,7 +551,7 @@ const DocumentProcessor = () => {
                 {result.data?.comparison?.matching_fields?.length > 0 && (
                   <div className="bg-white rounded-xl shadow-lg p-6">
                     <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-semibold text-gray-900">Matching Fields & Values</h3>
+                      <h3 className="text-lg font-semibold text-gray-900">Matching Fields</h3>
                       <span className="text-sm text-gray-500">
                         {result.data.comparison.matching_fields.length} fields matched
                       </span>
@@ -510,13 +559,7 @@ const DocumentProcessor = () => {
                     
                     <div className="space-y-4">
                       {result.data.comparison.matching_fields.map((field, idx) => (
-                        <ValueComparisonCard
-                          key={idx}
-                          title={field.field}
-                          formDValue={field.formd_value}
-                          invoiceValue={field.invoice_value}
-                          similarity={field.similarity}
-                        />
+                        <ThreeWayComparisonCard key={idx} field={field} />
                       ))}
                     </div>
                   </div>
@@ -531,25 +574,55 @@ const DocumentProcessor = () => {
                           <div className="flex justify-between items-start mb-3">
                             <h5 className="font-medium text-gray-900">{field.field}</h5>
                             <span className="text-sm text-red-700 bg-red-200 px-2 py-1 rounded">
-                              {(field.similarity * 100).toFixed(1)}% similarity
+                              {((field.avg_similarity || field.similarity) * 100).toFixed(1)}% similarity
                             </span>
                           </div>
                           
                           <div className="space-y-3">
-                            <div>
-                              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Form D Value:</span>
-                              <div className="mt-1 p-2 bg-white rounded border text-sm">
-                                {field.formd_value || 'Not found'}
+                            {field.formd_value !== undefined && (
+                              <div>
+                                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Form D:</span>
+                                <div className="mt-1 p-2 bg-white rounded border text-sm">
+                                  {field.formd_value || 'Not found'}
+                                </div>
                               </div>
-                            </div>
+                            )}
                             
-                            <div>
-                              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Invoice Value:</span>
-                              <div className="mt-1 p-2 bg-white rounded border text-sm">
-                                {field.invoice_value || 'Not found'}
+                            {field.invoice_value !== undefined && (
+                              <div>
+                                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Invoice:</span>
+                                <div className="mt-1 p-2 bg-white rounded border text-sm">
+                                  {field.invoice_value || 'Not found'}
+                                </div>
+                              </div>
+                            )}
+                            
+                            {field.bl_value !== undefined && (
+                              <div>
+                                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">BL:</span>
+                                <div className="mt-1 p-2 bg-white rounded border text-sm">
+                                  {field.bl_value || 'Not found'}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          
+                          {field.formd_invoice_sim !== undefined && (
+                            <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                              <div className="text-center p-1 bg-white rounded">
+                                <div className="text-gray-500">Form D ↔ Invoice</div>
+                                <div className="font-medium">{(field.formd_invoice_sim * 100).toFixed(0)}%</div>
+                              </div>
+                              <div className="text-center p-1 bg-white rounded">
+                                <div className="text-gray-500">Form D ↔ BL</div>
+                                <div className="font-medium">{(field.formd_bl_sim * 100).toFixed(0)}%</div>
+                              </div>
+                              <div className="text-center p-1 bg-white rounded">
+                                <div className="text-gray-500">Invoice ↔ BL</div>
+                                <div className="font-medium">{(field.invoice_bl_sim * 100).toFixed(0)}%</div>
                               </div>
                             </div>
-                          </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -574,7 +647,7 @@ const DocumentProcessor = () => {
               <div className="bg-white rounded-xl shadow-lg p-8 text-center">
                 <FileText className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-gray-900 mb-2">No Results Yet</h3>
-                <p className="text-gray-600">Upload both PDF files and click "Process Documents" to see the analysis results.</p>
+                <p className="text-gray-600">Upload all three PDF files (Form D, Invoice, and BL) and click "Process Documents" to see the analysis results.</p>
               </div>
             )}
           </div>
@@ -584,4 +657,4 @@ const DocumentProcessor = () => {
   );
 };
 
-export default DocumentProcessor;
+export default DocumentProcessor

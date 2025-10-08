@@ -275,7 +275,7 @@ Important:
                 image.save(debug_filename)
                 print(f"Debug image saved: {debug_filename}")
             
-            question = """Retrieve these information from the invoice in the image: sold to name, sold to address, ship to name, ship to address, shipped by name, shipped by address, shipment number, number, invoice date, description, total quantity, price per one, total price, packed in, total gross weight kgs, total net weight kgs, total cubic meters, loaded in
+            question = """Retrieve these information from the invoice in the image: sold to name, sold to address, ship to name, ship to address, shipped by name, shipped by address, shipment number, number, invoice date, description, total quantity, price per one, total price, packed in, total gross weight kgs, total net weight kgs, total cubic meters
 
     Important:
     - Do not include the unnecessary information

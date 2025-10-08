@@ -10,7 +10,6 @@ import logging
 from pathlib import Path
 
 # Import your existing DocumentProcessor class
-# Make sure the test.py file is in the same directory or adjust the import path
 from auditor import DocumentProcessor
 from dotenv import load_dotenv
 
@@ -22,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Document Processing API",
-    description="API for processing Form D and Invoice PDF documents using AI",
-    version="1.0.0"
+    description="API for processing Form D, Invoice, and BL (Bill of Lading) PDF documents using AI",
+    version="2.0.0"
 )
 
 # Add CORS middleware
@@ -56,7 +55,7 @@ async def root():
     return {
         "message": "Document Processing API is running",
         "status": "healthy",
-        "version": "1.0.0"
+        "version": "2.0.0"
     }
 
 @app.get("/health")
@@ -65,28 +64,32 @@ async def health_check():
     return {
         "status": "healthy",
         "processor_initialized": processor is not None,
-        "api_version": "1.0.0"
+        "api_version": "2.0.0"
     }
 
 @app.post("/process-documents")
 async def process_documents(
     formd_pdf: UploadFile = File(..., description="Form D PDF file"),
     invoice_pdf: UploadFile = File(..., description="Invoice PDF file"),
+    bl_pdf: UploadFile = File(..., description="BL (Bill of Lading) PDF file"),
     formd_page: int = Form(0, description="Page number for Form D (0-indexed)"),
-    invoice_page: int = Form(0, description="Page number for Invoice (0-indexed)"),
+    invoice_page: int = Form(2, description="Page number for Invoice (0-indexed)"),
+    bl_page: int = Form(0, description="Page number for BL (0-indexed)"),
     rotate_invoice: bool = Form(True, description="Whether to rotate invoice image 90° clockwise"),
-    crop_bottom_percent: float = Form(25.0, description="Percentage of bottom to crop from invoice image"),
+    crop_bottom_percent: float = Form(30.0, description="Percentage of bottom to crop from invoice and BL images"),
     api_key: Optional[str] = Form(None, description="Optional OpenAI API key override")
 ):
     """
-    Process Form D and Invoice PDF documents
+    Process Form D, Invoice, and BL PDF documents
     
     - **formd_pdf**: Upload the Form D PDF file
-    - **invoice_pdf**: Upload the Invoice PDF file  
+    - **invoice_pdf**: Upload the Invoice PDF file
+    - **bl_pdf**: Upload the BL (Bill of Lading) PDF file
     - **formd_page**: Page number to process from Form D (default: 0)
-    - **invoice_page**: Page number to process from Invoice (default: 0)
+    - **invoice_page**: Page number to process from Invoice (default: 2)
+    - **bl_page**: Page number to process from BL (default: 0)
     - **rotate_invoice**: Rotate invoice image 90° clockwise (default: true)
-    - **crop_bottom_percent**: Percentage of bottom to crop from invoice (default: 25%)
+    - **crop_bottom_percent**: Percentage of bottom to crop from invoice and BL (default: 30%)
     - **api_key**: Optional OpenAI API key override
     """
     
@@ -100,12 +103,18 @@ async def process_documents(
     if not invoice_pdf.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Invoice file must be a PDF")
     
+    if not bl_pdf.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="BL file must be a PDF")
+    
     # Validate parameters
     if formd_page < 0:
         raise HTTPException(status_code=400, detail="Form D page number must be >= 0")
     
     if invoice_page < 0:
         raise HTTPException(status_code=400, detail="Invoice page number must be >= 0")
+    
+    if bl_page < 0:
+        raise HTTPException(status_code=400, detail="BL page number must be >= 0")
     
     if crop_bottom_percent < 0 or crop_bottom_percent > 50:
         raise HTTPException(status_code=400, detail="Crop bottom percentage must be between 0 and 50")
@@ -114,6 +123,7 @@ async def process_documents(
     temp_dir = None
     formd_temp_path = None
     invoice_temp_path = None
+    bl_temp_path = None
     
     try:
         # Create temporary directory
@@ -122,6 +132,7 @@ async def process_documents(
         # Save uploaded files to temporary location
         formd_temp_path = os.path.join(temp_dir, f"formd_{formd_pdf.filename}")
         invoice_temp_path = os.path.join(temp_dir, f"invoice_{invoice_pdf.filename}")
+        bl_temp_path = os.path.join(temp_dir, f"bl_{bl_pdf.filename}")
         
         # Write uploaded files
         with open(formd_temp_path, "wb") as f:
@@ -132,8 +143,12 @@ async def process_documents(
             content = await invoice_pdf.read()
             f.write(content)
         
-        logger.info(f"Processing documents: {formd_pdf.filename} and {invoice_pdf.filename}")
-        logger.info(f"Parameters: formd_page={formd_page}, invoice_page={invoice_page}, "
+        with open(bl_temp_path, "wb") as f:
+            content = await bl_pdf.read()
+            f.write(content)
+        
+        logger.info(f"Processing documents: {formd_pdf.filename}, {invoice_pdf.filename}, and {bl_pdf.filename}")
+        logger.info(f"Parameters: formd_page={formd_page}, invoice_page={invoice_page}, bl_page={bl_page}, "
                    f"rotate_invoice={rotate_invoice}, crop_bottom_percent={crop_bottom_percent}")
         
         # Create processor instance with custom API key if provided
@@ -145,8 +160,10 @@ async def process_documents(
         result = current_processor.process_documents(
             formd_pdf_path=formd_temp_path,
             invoice_pdf_path=invoice_temp_path,
+            bl_pdf_path=bl_temp_path,
             formd_page=formd_page,
             invoice_page=invoice_page,
+            bl_page=bl_page,
             rotate_invoice=rotate_invoice,
             crop_bottom_percent=crop_bottom_percent
         )
@@ -165,8 +182,10 @@ async def process_documents(
             "metadata": {
                 "formd_filename": formd_pdf.filename,
                 "invoice_filename": invoice_pdf.filename,
+                "bl_filename": bl_pdf.filename,
                 "formd_page": formd_page,
                 "invoice_page": invoice_page,
+                "bl_page": bl_page,
                 "rotate_invoice": rotate_invoice,
                 "crop_bottom_percent": crop_bottom_percent
             }
@@ -186,6 +205,8 @@ async def process_documents(
                 os.remove(formd_temp_path)
             if invoice_temp_path and os.path.exists(invoice_temp_path):
                 os.remove(invoice_temp_path)
+            if bl_temp_path and os.path.exists(bl_temp_path):
+                os.remove(bl_temp_path)
             if temp_dir and os.path.exists(temp_dir):
                 os.rmdir(temp_dir)
         except Exception as e:
@@ -194,21 +215,25 @@ async def process_documents(
 @app.post("/process-documents-simple")
 async def process_documents_simple(
     formd_pdf: UploadFile = File(..., description="Form D PDF file"),
-    invoice_pdf: UploadFile = File(..., description="Invoice PDF file")
+    invoice_pdf: UploadFile = File(..., description="Invoice PDF file"),
+    bl_pdf: UploadFile = File(..., description="BL (Bill of Lading) PDF file")
 ):
     """
     Simplified endpoint for processing documents with default parameters
     
     - **formd_pdf**: Upload the Form D PDF file
     - **invoice_pdf**: Upload the Invoice PDF file
+    - **bl_pdf**: Upload the BL (Bill of Lading) PDF file
     """
     return await process_documents(
         formd_pdf=formd_pdf,
         invoice_pdf=invoice_pdf,
+        bl_pdf=bl_pdf,
         formd_page=0,
         invoice_page=2,
+        bl_page=0,
         rotate_invoice=True,
-        crop_bottom_percent=25.0,
+        crop_bottom_percent=30.0,
         api_key=None
     )
 
@@ -217,8 +242,8 @@ async def api_info():
     """Get information about the API and available endpoints"""
     return {
         "title": "Document Processing API",
-        "version": "1.0.0",
-        "description": "API for processing Form D and Invoice PDF documents using AI",
+        "version": "2.0.0",
+        "description": "API for processing Form D, Invoice, and BL (Bill of Lading) PDF documents using AI",
         "endpoints": {
             "/": "Root endpoint - health check",
             "/health": "Detailed health check",
@@ -231,7 +256,8 @@ async def api_info():
         "supported_formats": ["PDF"],
         "features": [
             "AI-powered text extraction from PDF documents",
-            "Document comparison and relationship analysis", 
+            "Three-way document comparison (Form D, Invoice, and BL)",
+            "Document relationship analysis with confidence scoring",
             "Validation against product and company databases",
             "Configurable image processing (rotation, cropping)",
             "Detailed confidence scoring and recommendations"
@@ -250,7 +276,7 @@ if __name__ == "__main__":
     
     # Run the server
     uvicorn.run(
-        "main:app",  # Adjust if your file is named differently
+        "main:app",
         host="0.0.0.0",
         port=8000,
         reload=True,  # Set to False in production
