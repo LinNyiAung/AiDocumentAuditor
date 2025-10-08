@@ -697,6 +697,120 @@ const DocumentProcessor = () => {
                     </ul>
                   </div>
                 )}
+
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Extracted Document Data</h3>
+                  
+                  <div className="space-y-4">
+                    {result.data?.formd_data && (
+                      <div className="border rounded-lg overflow-hidden">
+                        <button
+                          onClick={() => toggleSection('formd_data')}
+                          className="w-full flex items-center justify-between p-4 bg-blue-50 hover:bg-blue-100 transition-colors"
+                        >
+                          <div className="flex items-center">
+                            <FileText className="w-5 h-5 text-blue-600 mr-2" />
+                            <h4 className="font-medium text-gray-900">Form D Data</h4>
+                          </div>
+                          {expandedSections.formd_data ? (
+                            <ChevronDown className="w-5 h-5 text-gray-500" />
+                          ) : (
+                            <ChevronRight className="w-5 h-5 text-gray-500" />
+                          )}
+                        </button>
+                        
+                        {expandedSections.formd_data && (
+                          <div className="p-4 bg-white border-t">
+                            <div className="grid md:grid-cols-2 gap-4">
+                              {Object.entries(result.data.formd_data).map(([key, value]) => (
+                                <div key={key} className="space-y-1">
+                                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                                    {key}:
+                                  </span>
+                                  <div className="p-2 bg-gray-50 rounded border text-sm text-gray-700">
+                                    {typeof value === 'string' ? value : JSON.stringify(value)}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {result.data?.invoice_data && (
+                      <div className="border rounded-lg overflow-hidden">
+                        <button
+                          onClick={() => toggleSection('invoice_data')}
+                          className="w-full flex items-center justify-between p-4 bg-green-50 hover:bg-green-100 transition-colors"
+                        >
+                          <div className="flex items-center">
+                            <FileText className="w-5 h-5 text-green-600 mr-2" />
+                            <h4 className="font-medium text-gray-900">Invoice Data</h4>
+                          </div>
+                          {expandedSections.invoice_data ? (
+                            <ChevronDown className="w-5 h-5 text-gray-500" />
+                          ) : (
+                            <ChevronRight className="w-5 h-5 text-gray-500" />
+                          )}
+                        </button>
+                        
+                        {expandedSections.invoice_data && (
+                          <div className="p-4 bg-white border-t">
+                            <div className="grid md:grid-cols-2 gap-4">
+                              {Object.entries(result.data.invoice_data).map(([key, value]) => (
+                                <div key={key} className="space-y-1">
+                                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                                    {key}:
+                                  </span>
+                                  <div className="p-2 bg-gray-50 rounded border text-sm text-gray-700">
+                                    {typeof value === 'string' ? value : JSON.stringify(value)}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {result.data?.bl_data && (
+                      <div className="border rounded-lg overflow-hidden">
+                        <button
+                          onClick={() => toggleSection('bl_data')}
+                          className="w-full flex items-center justify-between p-4 bg-purple-50 hover:bg-purple-100 transition-colors"
+                        >
+                          <div className="flex items-center">
+                            <FileText className="w-5 h-5 text-purple-600 mr-2" />
+                            <h4 className="font-medium text-gray-900">BL (Bill of Lading) Data</h4>
+                          </div>
+                          {expandedSections.bl_data ? (
+                            <ChevronDown className="w-5 h-5 text-gray-500" />
+                          ) : (
+                            <ChevronRight className="w-5 h-5 text-gray-500" />
+                          )}
+                        </button>
+                        
+                        {expandedSections.bl_data && (
+                          <div className="p-4 bg-white border-t">
+                            <div className="grid md:grid-cols-2 gap-4">
+                              {Object.entries(result.data.bl_data).map(([key, value]) => (
+                                <div key={key} className="space-y-1">
+                                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                                    {key}:
+                                  </span>
+                                  <div className="p-2 bg-gray-50 rounded border text-sm text-gray-700">
+                                    {typeof value === 'string' ? value : JSON.stringify(value)}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="bg-white rounded-xl shadow-lg p-8 text-center">
