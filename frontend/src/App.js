@@ -544,6 +544,61 @@ const DocumentProcessor = () => {
                           )}
                         </div>
                       )}
+
+                      {result.data.validation.food_supplement_validation && (
+                        <div className="border rounded-lg p-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center">
+                              {getStatusIcon(result.data.validation.food_supplement_validation.contains_food_supplement ? 'PASS' : 'FAIL')}
+                              <h4 className="ml-2 font-medium">Food Supplement Validation</h4>
+                            </div>
+                            <span className={`text-xs px-2 py-1 rounded ${result.data.validation.food_supplement_validation.contains_food_supplement ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              {result.data.validation.food_supplement_validation.contains_food_supplement ? 'Found' : 'Not Found'}
+                            </span>
+                          </div>
+                          
+                          {expandedSections.validation && (
+                            <div className="mt-4 space-y-3">
+                              {result.data.validation.food_supplement_validation.match_details?.matched_term && (
+                                <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                                  <div className="text-xs font-medium text-green-700 mb-1">Matched Term:</div>
+                                  <div className="text-sm text-green-900 font-mono">
+                                    {result.data.validation.food_supplement_validation.match_details.matched_term}
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {result.data.validation.food_supplement_validation.description_of_goods && (
+                                <div>
+                                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">BL Description of Goods:</span>
+                                  <div className="mt-1 p-2 bg-white rounded border text-sm">
+                                    {result.data.validation.food_supplement_validation.description_of_goods}
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {result.data.validation.food_supplement_validation.normalized_description && (
+                                <div>
+                                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Normalized (for matching):</span>
+                                  <div className="mt-1 p-2 bg-gray-50 rounded border text-xs font-mono text-gray-600">
+                                    {result.data.validation.food_supplement_validation.normalized_description.substring(0, 200)}
+                                    {result.data.validation.food_supplement_validation.normalized_description.length > 200 && '...'}
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {result.data.validation.food_supplement_validation.error && (
+                                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                  <div className="text-xs font-medium text-yellow-700 mb-1">Note:</div>
+                                  <div className="text-sm text-yellow-900">
+                                    {result.data.validation.food_supplement_validation.error}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

@@ -606,6 +606,52 @@ Important:
         product_validation["found_matches"] = any(match["overall_match"] for match in best_matches)
         
         return product_validation
+    
+    
+    def validate_food_supplement(self, bl_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate if 'FOOD SUPPLEMENT' is contained in BL description of goods"""
+        food_supplement_validation = {
+            "contains_food_supplement": False,
+            "description_of_goods": "",
+            "normalized_description": "",
+            "match_details": {}
+        }
+        
+        description = str(bl_data.get("description_of_goods", "")).strip()
+        
+        if not description or description == "Not found":
+            food_supplement_validation["error"] = "Description of goods not found in BL"
+            return food_supplement_validation
+        
+        food_supplement_validation["description_of_goods"] = description
+        
+        # Normalize description for comparison (remove spaces, uppercase)
+        normalized_desc = description.upper().replace(" ", "").replace("-", "").replace("_", "")
+        food_supplement_validation["normalized_description"] = normalized_desc
+        
+        # Check for various forms of "FOOD SUPPLEMENT"
+        search_terms = ["FOODSUPPLEMENT", "FOODSUPPLEMENTS", "DIETARYSUPPLEMENT"]
+        
+        for term in search_terms:
+            if term in normalized_desc:
+                food_supplement_validation["contains_food_supplement"] = True
+                food_supplement_validation["match_details"]["matched_term"] = term
+                food_supplement_validation["match_details"]["original_description"] = description
+                break
+        
+        # Also check with spaces for more flexible matching
+        if not food_supplement_validation["contains_food_supplement"]:
+            upper_desc = description.upper()
+            flexible_terms = ["FOOD SUPPLEMENT", "FOOD SUPPLEMENTS", "DIETARY SUPPLEMENT"]
+            
+            for term in flexible_terms:
+                if term in upper_desc:
+                    food_supplement_validation["contains_food_supplement"] = True
+                    food_supplement_validation["match_details"]["matched_term"] = term
+                    food_supplement_validation["match_details"]["original_description"] = description
+                    break
+        
+        return food_supplement_validation
 
     def _get_match_reason(self, description_exists: bool, reverse_match: bool, similarity: float) -> str:
         """Get the reason for the match result"""
@@ -678,19 +724,19 @@ Important:
         return company_validation
 
 
-    def validate_against_csv(self, formd_data: Dict[str, Any], invoice_data: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_against_csv(self, formd_data: Dict[str, Any], invoice_data: Dict[str, Any], bl_data: Dict[str, Any]) -> Dict[str, Any]:
         """Validate extracted data against CSV files with improved logic"""
         validation_result = {
             "product_validation": self.validate_product_info(formd_data),
             "company_validation": self.validate_company_info(formd_data),
-            
+            "food_supplement_validation": self.validate_food_supplement(bl_data)
         }
         
         return validation_result
 
     def process_documents(self, formd_pdf_path: str, invoice_pdf_path: str, bl_pdf_path: str, 
-                         formd_page: int = 0, invoice_page: int = 2, bl_page: int = 0,
-                         rotate_invoice: bool = True, crop_bottom_percent: float = 30) -> Dict[str, Any]:
+                        formd_page: int = 0, invoice_page: int = 2, bl_page: int = 0,
+                        rotate_invoice: bool = True, crop_bottom_percent: float = 30) -> Dict[str, Any]:
         """Process Form D, invoice, and BL files, compare them, and validate against CSV data"""
         try:
             print("="*60)
@@ -724,7 +770,7 @@ Important:
             print("\n" + "="*60)
             print("VALIDATING AGAINST CSV DATA")
             print("="*60)
-            validation_result = self.validate_against_csv(formd_data, invoice_data)
+            validation_result = self.validate_against_csv(formd_data, invoice_data, bl_data)
             print("Validation Result:")
             print(json.dumps(validation_result, indent=2))
             
@@ -766,9 +812,9 @@ Important:
         # Check validation results
         company_valid = validation_result.get("company_validation", {}).get("found_matches", False)
         product_valid = validation_result.get("product_validation", {}).get("found_matches", False)
+        food_supplement_valid = validation_result.get("food_supplement_validation", {}).get("contains_food_supplement", False)
         
-        
-        validation_count = sum([company_valid, product_valid])
+        validation_count = sum([company_valid, product_valid, food_supplement_valid])
         
         if validation_count >= 2:
             assessment["validation_status"] = "Valid"
@@ -787,6 +833,8 @@ Important:
         if not product_valid:
             assessment["recommendations"].append("Product information could not be validated against product database")
         
+        if not food_supplement_valid:
+            assessment["recommendations"].append("BL description does not contain 'FOOD SUPPLEMENT' - verify product type")
         
         if confidence_score < 0.6:
             assessment["recommendations"].append("Low confidence match - manual review recommended")
@@ -796,7 +844,7 @@ Important:
         matching_fields = len(comparison_result.get("matching_fields", []))
         
         assessment["summary"] = f"Document comparison: {matching_fields}/{total_fields} fields match " \
-                              f"(confidence: {confidence_score:.1%}). Validation: {assessment['validation_status']}"
+                            f"(confidence: {confidence_score:.1%}). Validation: {assessment['validation_status']}"
         
         return assessment
 
@@ -817,7 +865,6 @@ Important:
         if comparison.get("matching_fields"):
             print(f"\nMatching Fields ({len(comparison['matching_fields'])}):")
             for match in comparison["matching_fields"]:
-                # Use 'similarity' key which exists in both two-way and three-way comparisons
                 sim_score = match.get('similarity', 0)
                 print(f"  • {match['field']}: {sim_score:.1%} similarity")
         
@@ -825,7 +872,7 @@ Important:
         print(f"\nValidation Results:")
         product_val = validation.get("product_validation", {})
         company_val = validation.get("company_validation", {})
-        
+        food_supplement_val = validation.get("food_supplement_validation", {})
         
         print(f"  • Product Validation: {'PASS' if product_val.get('found_matches') else 'FAIL'}")
         if product_val.get("matches"):
@@ -839,6 +886,11 @@ Important:
             print(f"    - Best match: {best_company.get('company_name_similarity', 0):.1%} name similarity")
             print(f"    - Address match: {'YES' if best_company.get('address_match') else 'NO'}")
         
+        print(f"  • Food Supplement Validation: {'PASS' if food_supplement_val.get('contains_food_supplement') else 'FAIL'}")
+        if food_supplement_val.get("match_details"):
+            print(f"    - Matched term: {food_supplement_val['match_details'].get('matched_term', 'N/A')}")
+        elif food_supplement_val.get("description_of_goods"):
+            print(f"    - BL Description: {food_supplement_val['description_of_goods'][:100]}...")
         
         if overall.get("recommendations"):
             print(f"\nRecommendations:")
