@@ -483,9 +483,9 @@ const DocumentProcessor = () => {
                               {getStatusIcon(result.data.validation.product_validation.found_matches ? 'PASS' : 'FAIL')}
                               <h4 className="ml-2 font-medium">Product Validation</h4>
                             </div>
-                            <span className="text-xs text-gray-500">
+                            {/* <span className="text-xs text-gray-500">
                               {result.data.validation.product_validation.matches?.length || 0} matches found
-                            </span>
+                            </span> */}
                           </div>
                           
                           {expandedSections.validation && (
@@ -684,7 +684,7 @@ const DocumentProcessor = () => {
                   </div>
                 )}
 
-                {result.data?.overall_assessment?.recommendations?.length > 0 && (
+                {/* {result.data?.overall_assessment?.recommendations?.length > 0 && (
                   <div className="bg-white rounded-xl shadow-lg p-6">
                     <h3 className="text-lg font-semibold text-gray-900 mb-4">Recommendations</h3>
                     <ul className="space-y-2">
@@ -696,7 +696,7 @@ const DocumentProcessor = () => {
                       ))}
                     </ul>
                   </div>
-                )}
+                )} */}
 
                 <div className="bg-white rounded-xl shadow-lg p-6">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">Extracted Document Data</h3>

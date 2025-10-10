@@ -417,8 +417,11 @@ Important:
         ]
         
         # Define two-way field mappings: (invoice_field, bl_field, comparison_type)
+        # OR (formd_field, invoice_field, comparison_type) for Form D vs Invoice comparisons
         two_way_mappings = [
-            ("shipment_number", "shipment_number", "general"),
+            ("shipment_number", "shipment_number", "general", "invoice_bl"),  # Invoice vs BL
+            ("Number of invoices", "number", "number", "formd_invoice"),  # Form D vs Invoice - NEW
+            ("Date of invoices", "invoice_date", "general", "formd_invoice"),  # Form D vs Invoice - NEW
         ]
         
         matches = 0
@@ -477,34 +480,69 @@ Important:
                         "invoice_bl_sim": round(sim3, 3)
                     })
         
-        # Process two-way comparisons (Invoice and BL only)
-        for invoice_field, bl_field, comparison_type in two_way_mappings:
-            if invoice_field in invoice_data and bl_field in bl_data:
-                total_comparisons += 1
-                invoice_val = invoice_data[invoice_field]
-                bl_val = bl_data[bl_field]
-                
-                # Use appropriate comparison method
-                if comparison_type == "general":
-                    is_match, similarity = self.fuzzy_match(str(invoice_val), str(bl_val))
-                else:
-                    is_match, similarity = self.fuzzy_match(str(invoice_val), str(bl_val))
-                
-                if is_match:
-                    matches += 1
-                    comparison_result["matching_fields"].append({
-                        "field": f"{invoice_field} / {bl_field}",
-                        "invoice_value": invoice_val,
-                        "bl_value": bl_val,
-                        "similarity": round(similarity, 3)
-                    })
-                elif similarity > 0.3:  # Still record partial matches
-                    comparison_result["discrepancies"].append({
-                        "field": f"{invoice_field} / {bl_field}",
-                        "invoice_value": invoice_val,
-                        "bl_value": bl_val,
-                        "similarity": round(similarity, 3)
-                    })
+        # Process two-way comparisons
+        for *fields, comparison_type, comparison_pair in two_way_mappings:
+            if comparison_pair == "invoice_bl":
+                # Invoice vs BL comparison
+                invoice_field, bl_field = fields
+                if invoice_field in invoice_data and bl_field in bl_data:
+                    total_comparisons += 1
+                    invoice_val = invoice_data[invoice_field]
+                    bl_val = bl_data[bl_field]
+                    
+                    # Use appropriate comparison method
+                    if comparison_type == "general":
+                        is_match, similarity = self.fuzzy_match(str(invoice_val), str(bl_val))
+                    else:
+                        is_match, similarity = self.fuzzy_match(str(invoice_val), str(bl_val))
+                    
+                    if is_match:
+                        matches += 1
+                        comparison_result["matching_fields"].append({
+                            "field": f"{invoice_field} / {bl_field}",
+                            "invoice_value": invoice_val,
+                            "bl_value": bl_val,
+                            "similarity": round(similarity, 3)
+                        })
+                    elif similarity > 0.3:  # Still record partial matches
+                        comparison_result["discrepancies"].append({
+                            "field": f"{invoice_field} / {bl_field}",
+                            "invoice_value": invoice_val,
+                            "bl_value": bl_val,
+                            "similarity": round(similarity, 3)
+                        })
+            
+            elif comparison_pair == "formd_invoice":
+                # Form D vs Invoice comparison
+                formd_field, invoice_field = fields
+                if formd_field in formd_data and invoice_field in invoice_data:
+                    total_comparisons += 1
+                    formd_val = formd_data[formd_field]
+                    invoice_val = invoice_data[invoice_field]
+                    
+                    # Use appropriate comparison method
+                    if comparison_type == "number":
+                        is_match, similarity = self.fuzzy_match_number(str(formd_val), str(invoice_val))
+                    elif comparison_type == "general":
+                        is_match, similarity = self.fuzzy_match(str(formd_val), str(invoice_val))
+                    else:
+                        is_match, similarity = self.fuzzy_match(str(formd_val), str(invoice_val))
+                    
+                    if is_match:
+                        matches += 1
+                        comparison_result["matching_fields"].append({
+                            "field": f"{formd_field} / {invoice_field}",
+                            "formd_value": formd_val,
+                            "invoice_value": invoice_val,
+                            "similarity": round(similarity, 3)
+                        })
+                    elif similarity > 0.3:  # Still record partial matches
+                        comparison_result["discrepancies"].append({
+                            "field": f"{formd_field} / {invoice_field}",
+                            "formd_value": formd_val,
+                            "invoice_value": invoice_val,
+                            "similarity": round(similarity, 3)
+                        })
         
         comparison_result["total_fields_compared"] = total_comparisons
         
