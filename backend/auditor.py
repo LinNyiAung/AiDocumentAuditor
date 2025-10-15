@@ -196,8 +196,8 @@ class DocumentProcessor:
         "Product Description": "...",
         "CTNS": "...",
         "Gross weight": "...",
-        "Invoice Number": "...",
-        "Invoice Date": "..."
+        "Number of invoices": "...",
+        "Date of invoices": "..."
         }
     ]
     }
@@ -218,8 +218,8 @@ class DocumentProcessor:
         "Product Description": "full description from column 7",
         "CTNS": "from column 9",
         "Gross weight": "from column 9",
-        "Invoice Number": "from column 10",
-        "Invoice Date": "from column 10"
+        "Number of invoices": "from column 10",
+        "Date of invoices": "from column 10"
         }
     ]
     }
