@@ -18,17 +18,14 @@ class DocumentProcessor:
         """Initialize the document processor with OpenAI API"""
         print("Initializing OpenAI client...")
         
-        # Initialize OpenAI client
         if api_key:
             self.client = OpenAI(api_key=api_key)
         else:
-            # Will use OPENAI_API_KEY environment variable
             self.client = OpenAI()
         
         self.model = model
         print(f"Using OpenAI model: {self.model}")
         
-        # Load validation data
         self.load_validation_data()
         
     def detect_encoding(self, file_path: str) -> str:
@@ -51,10 +48,7 @@ class DocumentProcessor:
             print(f"File not found: {file_path}")
             return None
             
-        # Try multiple encodings
         encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
-        
-        # First try to detect encoding
         detected_encoding = self.detect_encoding(file_path)
         if detected_encoding and detected_encoding not in encodings:
             encodings.insert(0, detected_encoding)
@@ -77,17 +71,14 @@ class DocumentProcessor:
         return None
 
     def load_validation_data(self):
-        """Load CSV data for validation with improved encoding handling"""
+        """Load CSV data for validation"""
         try:
-            # Load product information
             product_file = './data/5.1 Abbott IR H.S code and FormD desctiption (14-05-24) updated 13Aug 24.csv'
             self.product_data = self.load_csv_with_fallback(product_file)
             
-            # Load company information
             company_file = './data/Companies.csv'
             self.company_data = self.load_csv_with_fallback(company_file)
             
-            # Load Abbott registration data
             abbott_file = './data/Abbott.csv'
             self.abbott_data = self.load_csv_with_fallback(abbott_file)
             
@@ -112,30 +103,23 @@ class DocumentProcessor:
     def extract_image_info(self, image: Image.Image, question: str) -> Dict[str, Any]:
         """Extract information from an image using OpenAI Vision API"""
         try:
-            # Convert image to base64
             base64_image = self.image_to_base64(image)
             
-            # Create the message for OpenAI API
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {
                         "role": "user",
                         "content": [
-                            {
-                                "type": "text",
-                                "text": question
-                            },
+                            {"type": "text", "text": question},
                             {
                                 "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{base64_image}"
-                                }
+                                "image_url": {"url": f"data:image/png;base64,{base64_image}"}
                             }
                         ]
                     }
                 ],
-                max_tokens=1000,
+                max_tokens=2000,
                 temperature=0.1
             )
             
@@ -145,7 +129,6 @@ class DocumentProcessor:
                 return json.loads(output_text)
             except json.JSONDecodeError:
                 print("Warning: Could not parse JSON response, attempting to clean...")
-                # Try to extract JSON from the response
                 json_match = re.search(r'\{.*\}', output_text, re.DOTALL)
                 if json_match:
                     try:
@@ -160,87 +143,228 @@ class DocumentProcessor:
             print(f"Error in extract_image_info: {e}")
             return {"error": str(e)}
 
-    def extract_formd_info(self, formd_pdf_path: str, page_index: int = 0, save_debug_image: bool = False) -> Dict[str, Any]:
-        """Extract information from Form D document"""
+    def extract_formd_info(self, formd_pdf_path: str, page_numbers: List[int] = None, save_debug_image: bool = False) -> Dict[str, Any]:
+        """Extract information from specified pages of Form D document"""
         try:
-            print(f"Converting Form D PDF to image (page {page_index})...")
+            print(f"Converting Form D PDF to images...")
             images = convert_from_path(formd_pdf_path, dpi=300)
+            print(f"Form D has {len(images)} page(s)")
             
-            if page_index >= len(images):
-                raise ValueError(f"Page {page_index} not found. Form D PDF has {len(images)} pages.")
+            # If no page numbers specified, use only first page
+            if page_numbers is None:
+                page_numbers = [0]
             
-            image = images[page_index]
+            # Validate page numbers
+            valid_pages = []
+            for page_num in page_numbers:
+                if 0 <= page_num < len(images):
+                    valid_pages.append(page_num)
+                else:
+                    print(f"Warning: Page {page_num} is out of range (0-{len(images)-1}). Skipping.")
             
-            # Save debug image
-            if save_debug_image:
-                debug_filename = f"debug_formd_page{page_index}.png"
-                image.save(debug_filename)
-                print(f"Debug image saved: {debug_filename}")
+            if not valid_pages:
+                raise ValueError("No valid pages to process")
             
-            question = """Retrieve these information from the document: Exporter's business name, Exporter's address, Exporter's country, Consignee's business name, Consignee's address, Consignee's country, Item Number, HS CODE, Product Description, CTNS, Gross weight, Number of invoices, Date of invoices
+            print(f"Processing Form D pages: {valid_pages}")
+            
+            all_products = []
+            common_info = {}
+            
+            for idx, page_index in enumerate(valid_pages):
+                print(f"\nProcessing Form D page {page_index} ({idx + 1}/{len(valid_pages)})...")
+                image = images[page_index]
+                
+                if save_debug_image:
+                    debug_filename = f"debug_formd_page{page_index}.png"
+                    image.save(debug_filename)
+                    print(f"Debug image saved: {debug_filename}")
+                
+                if idx == 0:
+                    # First selected page: extract common info + products
+                    question = """Extract ALL information from this Form D page as JSON:
+    {
+    "Exporter's business name": "...",
+    "Exporter's address": "...",
+    "Exporter's country": "...",
+    "Consignee's business name": "...",
+    "Consignee's address": "...",
+    "Consignee's country": "...",
+    "products": [
+        {
+        "Item Number": "...",
+        "HS CODE": "...",
+        "Product Description": "...",
+        "CTNS": "...",
+        "Gross weight": "...",
+        "Invoice Number": "...",
+        "Invoice Date": "..."
+        }
+    ]
+    }
 
-Important:
-- Do not include the unnecessary information
-- Only extract the required information
-- Extract information exactly as it appears in the document
-- If information is not found, use "Not found" as the value
-- Return only valid JSON format
-- Do not include any explanations or additional text"""
+    Important:
+    - Extract ALL product items from the table (items 1, 2, 3, 4, 5, etc.)
+    - Each row in columns 5-10 is a separate product
+    - If information is not found, use "Not found"
+    - Return only valid JSON"""
+                else:
+                    # Subsequent pages: extract only products
+                    question = """Extract ALL product items from this Form D continuation page as JSON:
+    {
+    "products": [
+        {
+        "Item Number": "from column 5",
+        "HS CODE": "from column 7",
+        "Product Description": "full description from column 7",
+        "CTNS": "from column 9",
+        "Gross weight": "from column 9",
+        "Invoice Number": "from column 10",
+        "Invoice Date": "from column 10"
+        }
+    ]
+    }
+
+    Important:
+    - Extract ALL product items from the table
+    - Each row is a separate product
+    - If information is not found, use "Not found"
+    - Return only valid JSON"""
+                
+                page_data = self.extract_image_info(image, question)
+                
+                if idx == 0 and "products" in page_data:
+                    # Save common info from first selected page
+                    common_info = {k: v for k, v in page_data.items() if k != "products"}
+                    all_products.extend(page_data["products"])
+                elif "products" in page_data:
+                    all_products.extend(page_data["products"])
             
-            return self.extract_image_info(image, question)
+            # Combine common info with all products
+            result = common_info.copy()
+            result["products"] = all_products
+            result["total_products"] = len(all_products)
+            result["pages_processed"] = valid_pages
+            
+            print(f"\nExtracted {len(all_products)} product(s) from Form D pages {valid_pages}")
+            return result
             
         except Exception as e:
             print(f"Error extracting Form D info: {e}")
             return {"error": str(e)}
 
-    def extract_bl_info(self, bl_pdf_path: str, page_index: int = 0, crop_bottom_percent: float = 30, save_debug_image: bool = False) -> Dict[str, Any]:
-        """Extract information from BL (Bill of Lading) document"""
+    def extract_bl_info(self, bl_pdf_path: str, page_numbers: List[int] = None, crop_bottom_percent: float = 18, save_debug_image: bool = False) -> Dict[str, Any]:
+        """Extract information from specified pages of BL document"""
         try:
-            print(f"Converting BL PDF to image (page {page_index})...")
+            print(f"Converting BL PDF to images...")
             images = convert_from_path(bl_pdf_path, dpi=300)
+            print(f"BL has {len(images)} page(s)")
             
-            if page_index >= len(images):
-                raise ValueError(f"Page {page_index} not found. BL PDF has {len(images)} pages.")
+            # If no page numbers specified, use only first page
+            if page_numbers is None:
+                page_numbers = [0]
             
-            image = images[page_index]
+            # Validate page numbers
+            valid_pages = []
+            for page_num in page_numbers:
+                if 0 <= page_num < len(images):
+                    valid_pages.append(page_num)
+                else:
+                    print(f"Warning: Page {page_num} is out of range (0-{len(images)-1}). Skipping.")
             
-            # Crop bottom portion of the image if requested
-            if crop_bottom_percent > 0:
-                width, height = image.size
-                crop_pixels = int(height * crop_bottom_percent / 100)
+            if not valid_pages:
+                raise ValueError("No valid pages to process")
+            
+            print(f"Processing BL pages: {valid_pages}")
+            
+            all_containers = []
+            common_info = {}
+            
+            for idx, page_index in enumerate(valid_pages):
+                print(f"\nProcessing BL page {page_index} ({idx + 1}/{len(valid_pages)})...")
+                image = images[page_index]
                 
-                # Crop from top-left (0,0) to bottom-right, but exclude bottom portion
-                cropped_height = height - crop_pixels
-                print(f"Cropping {crop_bottom_percent}% ({crop_pixels} pixels) from bottom. New height: {cropped_height}")
+                if crop_bottom_percent > 0:
+                    width, height = image.size
+                    crop_pixels = int(height * crop_bottom_percent / 100)
+                    cropped_height = height - crop_pixels
+                    print(f"Cropping {crop_bottom_percent}% ({crop_pixels} pixels) from bottom. New height: {cropped_height}")
+                    crop_box = (0, 0, width, cropped_height)
+                    image = image.crop(crop_box)
                 
-                # Crop box: (left, top, right, bottom)
-                crop_box = (0, 0, width, cropped_height)
-                image = image.crop(crop_box)
-            
-            # Save debug image
-            if save_debug_image:
-                debug_filename = f"debug_bl_page{page_index}_cropped.png"
-                image.save(debug_filename)
-                print(f"Debug image saved: {debug_filename}")
-            
-            question = """Retrieve these information from the Bill of Lading document: shipper name, shipper address, consignee name, consignee address, notify party name, notify party address, shipment number, port of loading, marks and numbers, description of goods, number of cartons, gross weight
+                if save_debug_image:
+                    debug_filename = f"debug_bl_page{page_index}_cropped.png"
+                    image.save(debug_filename)
+                    print(f"Debug image saved: {debug_filename}")
+                
+                # Always ask for ALL fields from each page - let the model return what's available
+                question = """Extract ALL information from this Bill of Lading page as JSON:
+    {
+    "shipper_name": "...",
+    "shipper_address": "...",
+    "consignee_name": "...",
+    "consignee_address": "...",
+    "notify_party_name": "...",
+    "notify_party_address": "...",
+    "port_of_loading": "...",
+    "port_of_discharge": "...",
+    "shipment_number": "...",
+    "number_of_containers": "...",
+    "number_of_cartons": "...",
+    "total_number_of_packages": "total if shown",
+    "total_gross_weight": "total if shown",
+    "containers": [
+        {
+        "description_of_goods": "...",
+        "carton": "...",
+        "gross_weight": "...",
+        }
+    ]
+    }
 
-Important:
-- Do not include the unnecessary information
-- Only extract the required information
-- Extract information exactly as it appears in the document
-- If information is not found, use "Not found" as the value
-- Return only valid JSON format
-- Do not include any explanations or additional text"""
+    Important:
+    - Extract ALL available information from this page
+    - For header/summary fields not present on this page, use "Not found"
+    - Extract ALL container entries from the table if present
+    - If information is not found, use "Not found"
+    - Return only valid JSON"""
+                
+                page_data = self.extract_image_info(image, question)
+                
+                # Merge common info from all pages
+                if idx == 0:
+                    # First page: initialize common_info
+                    common_info = {k: v for k, v in page_data.items() if k != "containers"}
+                else:
+                    # Subsequent pages: merge non-container fields
+                    # Update common_info with any non-empty values from this page
+                    for key, value in page_data.items():
+                        if key != "containers":
+                            # Update if current value is "Not found" or empty, and new value is not
+                            current_val = common_info.get(key, "")
+                            if (not current_val or current_val == "Not found") and value and value != "Not found":
+                                common_info[key] = value
+                                print(f"  Updated '{key}' from page {page_index}: {value}")
+                
+                # Collect containers from all pages
+                if "containers" in page_data:
+                    all_containers.extend(page_data["containers"])
             
-            return self.extract_image_info(image, question)
+            # Combine common info with all containers
+            result = common_info.copy()
+            result["containers"] = all_containers
+            result["total_containers"] = len(all_containers)
+            result["pages_processed"] = valid_pages
+            
+            print(f"\nExtracted {len(all_containers)} container(s) from BL pages {valid_pages}")
+            return result
             
         except Exception as e:
             print(f"Error extracting BL info: {e}")
             return {"error": str(e)}
 
-    def extract_invoice_info(self, invoice_pdf_path: str, page_index: int = 2, rotate_image: bool = True, crop_bottom_percent: float = 30, save_debug_image: bool = False) -> Dict[str, Any]:
-        """Extract information from invoice document with optional rotation and bottom cropping"""
+
+    def extract_invoice_info(self, invoice_pdf_path: str, page_index: int = 2, rotate_image: bool = True, crop_bottom_percent: float = 18, save_debug_image: bool = False) -> Dict[str, Any]:
+        """Extract information from invoice document"""
         try:
             print(f"Converting Invoice PDF to image (page {page_index})...")
             images = convert_from_path(invoice_pdf_path, dpi=300)
@@ -250,40 +374,54 @@ Important:
             
             image = images[page_index]
             
-            # Rotate image 90 degrees clockwise (to the right) if requested
             if rotate_image:
                 print("Rotating invoice image 90 degrees clockwise...")
-                image = image.rotate(-90, expand=True)  # -90 for clockwise rotation
+                image = image.rotate(-90, expand=True)
             
-            # Crop bottom portion of the image if requested
             if crop_bottom_percent > 0:
                 width, height = image.size
                 crop_pixels = int(height * crop_bottom_percent / 100)
-                
-                # Crop from top-left (0,0) to bottom-right, but exclude bottom portion
                 cropped_height = height - crop_pixels
                 print(f"Cropping {crop_bottom_percent}% ({crop_pixels} pixels) from bottom. New height: {cropped_height}")
-                
-                # Crop box: (left, top, right, bottom)
                 crop_box = (0, 0, width, cropped_height)
                 image = image.crop(crop_box)
             
-            # Save debug image
             if save_debug_image:
                 rotation_text = "rotated_" if rotate_image else ""
                 debug_filename = f"debug_invoice_page{page_index}_{rotation_text}cropped.png"
                 image.save(debug_filename)
                 print(f"Debug image saved: {debug_filename}")
             
-            question = """Retrieve these information from the invoice in the image: sold to name, sold to address, ship to name, ship to address, shipped by name, shipped by address, shipment number, number, invoice date, description, total quantity, price per one, total price, packed in, total gross weight kgs, total net weight kgs, total cubic meters
+            question = """Extract ALL information from the invoice as JSON:
+{
+  "sold_to_name": "...",
+  "sold_to_address": "...",
+  "ship_to_name": "...",
+  "ship_to_address": "...",
+  "shipped_by_name": "...",
+  "shipped_by_address": "...",
+  "shipment_number": "...",
+  "number": "invoice number",
+  "invoice_date": "...",
+  "total_gross_weight_kgs": "...",
+  "total_net_weight_kgs": "...",
+  "packed_in": "total cartons/boxes",
+  "products": [
+    {
+      "description": "product description",
+      "lot_number": "...",
+      "total_quantity": "...",
+      "price_per_one": "...",
+      "total_price": "..."
+    }
+  ]
+}
 
-    Important:
-    - Do not include the unnecessary information
-    - Only extract the required information
-    - Extract information exactly as it appears in the document
-    - If information is not found, use "Not found" as the value
-    - Return only valid JSON format
-    - Do not include any explanations or additional text"""
+Important:
+- Extract ALL product lines from the table
+- Include both header info and all products
+- If information is not found, use "Not found"
+- Return only valid JSON"""
             
             return self.extract_image_info(image, question)
             
@@ -292,11 +430,9 @@ Important:
             return {"error": str(e)}
 
     def normalize_weight(self, weight_text: str) -> str:
-        """Normalize weight by removing spaces, words and letters, leaving only numbers"""
+        """Normalize weight by removing spaces, words and letters"""
         if not weight_text or weight_text == "Not found" or weight_text == "":
             return ""
-        
-        # Remove all non-numeric characters (letters, spaces, units, etc.)
         normalized = re.sub(r'[^0-9.]', '', str(weight_text))
         return normalized.strip()
 
@@ -304,8 +440,6 @@ Important:
         """Normalize description by removing spaces and making all letters capital"""
         if not description_text or description_text == "Not found" or description_text == "":
             return ""
-        
-        # Remove all spaces and convert to uppercase
         normalized = str(description_text).replace(" ", "").upper()
         return normalized.strip()
 
@@ -330,7 +464,7 @@ Important:
         return similarity >= threshold, similarity
 
     def fuzzy_match_weight(self, weight1: str, weight2: str, threshold: float = 0.8) -> Tuple[bool, float]:
-        """Perform fuzzy matching between two weight values using normalized weights"""
+        """Perform fuzzy matching between two weight values"""
         if not weight1 or not weight2:
             return False, 0.0
         
@@ -340,50 +474,43 @@ Important:
         if not norm_weight1 or not norm_weight2:
             return False, 0.0
         
-        # For numerical comparison, check if they're exactly the same
         try:
             val1 = float(norm_weight1)
             val2 = float(norm_weight2)
             if val1 == val2:
                 return True, 1.0
-            # Allow for small numerical differences
             diff = abs(val1 - val2) / max(val1, val2) if max(val1, val2) != 0 else 0
             similarity = 1.0 - diff
             return similarity >= threshold, similarity
         except ValueError:
-            # Fall back to string comparison if not numeric
             similarity = difflib.SequenceMatcher(None, norm_weight1, norm_weight2).ratio()
             return similarity >= threshold, similarity
 
     def fuzzy_match_number(self, text1: str, text2: str, threshold: float = 0.8) -> Tuple[bool, float]:
-        """Perform fuzzy matching between two texts by extracting and comparing numbers only"""
+        """Perform fuzzy matching between two texts by extracting numbers"""
         if not text1 or not text2:
             return False, 0.0
         
-        # Extract only numbers (including decimals) from both texts
         num1 = re.sub(r'[^0-9.]', '', str(text1))
         num2 = re.sub(r'[^0-9.]', '', str(text2))
         
         if not num1 or not num2:
             return False, 0.0
         
-        # For numerical comparison, check if they're exactly the same
         try:
             val1 = float(num1)
             val2 = float(num2)
             if val1 == val2:
                 return True, 1.0
-            # Allow for small numerical differences
             diff = abs(val1 - val2) / max(val1, val2) if max(val1, val2) != 0 else 0
             similarity = 1.0 - diff
             return similarity >= threshold, similarity
         except ValueError:
-            # Fall back to string comparison if not numeric
             similarity = difflib.SequenceMatcher(None, num1, num2).ratio()
             return similarity >= threshold, similarity
 
     def fuzzy_match_description(self, desc1: str, desc2: str, threshold: float = 0.8) -> Tuple[bool, float]:
-        """Perform fuzzy matching between two descriptions using normalized descriptions"""
+        """Perform fuzzy matching between two descriptions"""
         if not desc1 or not desc2:
             return False, 0.0
         
@@ -397,60 +524,39 @@ Important:
         return similarity >= threshold, similarity
 
     def compare_documents(self, formd_data: Dict[str, Any], invoice_data: Dict[str, Any], bl_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Compare Form D, invoice, and BL data to determine if they are related"""
+        """Compare Form D, invoice, and BL data - handles multiple products"""
         comparison_result = {
             "documents_related": False,
             "matching_fields": [],
             "discrepancies": [],
             "confidence_score": 0.0,
-            "total_fields_compared": 0
+            "total_fields_compared": 0,
+            "product_matches": []
         }
         
-        # Define three-way field mappings: (formd_field, invoice_field, bl_field, comparison_type)
-        three_way_mappings = [
+        # Compare common fields (non-product)
+        common_field_mappings = [
             ("Consignee's business name", "ship_to_name", "consignee_name", "general"),
             ("Consignee's address", "ship_to_address", "consignee_address", "general"),
             ("Exporter's business name", "shipped_by_name", "shipper_name", "general"),
             ("Exporter's address", "shipped_by_address", "shipper_address", "general"),
-            ("Gross weight", "total_gross_weight_kgs", "gross_weight", "weight"),
-            ("CTNS", "packed_in", "number_of_cartons", "number"),
-        ]
-        
-        # Define two-way field mappings: (invoice_field, bl_field, comparison_type)
-        # OR (formd_field, invoice_field, comparison_type) for Form D vs Invoice comparisons
-        two_way_mappings = [
-            ("shipment_number", "shipment_number", "general", "invoice_bl"),  # Invoice vs BL
-            ("Number of invoices", "number", "number", "formd_invoice"),  # Form D vs Invoice - NEW
-            ("Date of invoices", "invoice_date", "general", "formd_invoice"),  # Form D vs Invoice - NEW
         ]
         
         matches = 0
         total_comparisons = 0
         
-        # Process three-way comparisons (Form D, Invoice, BL)
-        for formd_field, invoice_field, bl_field, comparison_type in three_way_mappings:
+        # Process common field comparisons
+        for formd_field, invoice_field, bl_field, comparison_type in common_field_mappings:
             if formd_field in formd_data and invoice_field in invoice_data and bl_field in bl_data:
                 total_comparisons += 1
                 formd_val = formd_data[formd_field]
                 invoice_val = invoice_data[invoice_field]
                 bl_val = bl_data[bl_field]
                 
-                # Use appropriate comparison method based on field type
-                if comparison_type == "weight":
-                    match1, sim1 = self.fuzzy_match_weight(str(formd_val), str(invoice_val))
-                    match2, sim2 = self.fuzzy_match_weight(str(formd_val), str(bl_val))
-                    match3, sim3 = self.fuzzy_match_weight(str(invoice_val), str(bl_val))
-                elif comparison_type == "number":
-                    # Extract numbers only for comparison
-                    match1, sim1 = self.fuzzy_match_number(str(formd_val), str(invoice_val))
-                    match2, sim2 = self.fuzzy_match_number(str(formd_val), str(bl_val))
-                    match3, sim3 = self.fuzzy_match_number(str(invoice_val), str(bl_val))
-                else:
-                    match1, sim1 = self.fuzzy_match(str(formd_val), str(invoice_val))
-                    match2, sim2 = self.fuzzy_match(str(formd_val), str(bl_val))
-                    match3, sim3 = self.fuzzy_match(str(invoice_val), str(bl_val))
+                match1, sim1 = self.fuzzy_match(str(formd_val), str(invoice_val))
+                match2, sim2 = self.fuzzy_match(str(formd_val), str(bl_val))
+                match3, sim3 = self.fuzzy_match(str(invoice_val), str(bl_val))
                 
-                # Calculate average similarity across all three documents
                 avg_similarity = (sim1 + sim2 + sim3) / 3
                 all_match = match1 and match2 and match3
                 
@@ -461,88 +567,68 @@ Important:
                         "formd_value": formd_val,
                         "invoice_value": invoice_val,
                         "bl_value": bl_val,
-                        "similarity": round(avg_similarity, 3),
-                        "avg_similarity": round(avg_similarity, 3),
-                        "formd_invoice_sim": round(sim1, 3),
-                        "formd_bl_sim": round(sim2, 3),
-                        "invoice_bl_sim": round(sim3, 3)
+                        "similarity": round(avg_similarity, 3)
                     })
-                elif avg_similarity > 0.1:  # Still record partial matches
+                elif avg_similarity > 0.1:
                     comparison_result["discrepancies"].append({
                         "field": f"{formd_field} / {invoice_field} / {bl_field}",
                         "formd_value": formd_val,
                         "invoice_value": invoice_val,
                         "bl_value": bl_val,
-                        "similarity": round(avg_similarity, 3),
-                        "avg_similarity": round(avg_similarity, 3),
-                        "formd_invoice_sim": round(sim1, 3),
-                        "formd_bl_sim": round(sim2, 3),
-                        "invoice_bl_sim": round(sim3, 3)
+                        "similarity": round(avg_similarity, 3)
                     })
         
-        # Process two-way comparisons
-        for *fields, comparison_type, comparison_pair in two_way_mappings:
-            if comparison_pair == "invoice_bl":
-                # Invoice vs BL comparison
-                invoice_field, bl_field = fields
-                if invoice_field in invoice_data and bl_field in bl_data:
-                    total_comparisons += 1
-                    invoice_val = invoice_data[invoice_field]
-                    bl_val = bl_data[bl_field]
-                    
-                    # Use appropriate comparison method
-                    if comparison_type == "general":
-                        is_match, similarity = self.fuzzy_match(str(invoice_val), str(bl_val))
-                    else:
-                        is_match, similarity = self.fuzzy_match(str(invoice_val), str(bl_val))
-                    
-                    if is_match:
-                        matches += 1
-                        comparison_result["matching_fields"].append({
-                            "field": f"{invoice_field} / {bl_field}",
-                            "invoice_value": invoice_val,
-                            "bl_value": bl_val,
-                            "similarity": round(similarity, 3)
-                        })
-                    elif similarity > 0.3:  # Still record partial matches
-                        comparison_result["discrepancies"].append({
-                            "field": f"{invoice_field} / {bl_field}",
-                            "invoice_value": invoice_val,
-                            "bl_value": bl_val,
-                            "similarity": round(similarity, 3)
-                        })
+        # Compare products
+        formd_products = formd_data.get("products", [])
+        invoice_products = invoice_data.get("products", [])
+        
+        if formd_products and invoice_products:
+            print(f"\nComparing products: {len(formd_products)} from Form D vs {len(invoice_products)} from Invoice")
             
-            elif comparison_pair == "formd_invoice":
-                # Form D vs Invoice comparison
-                formd_field, invoice_field = fields
-                if formd_field in formd_data and invoice_field in invoice_data:
-                    total_comparisons += 1
-                    formd_val = formd_data[formd_field]
-                    invoice_val = invoice_data[invoice_field]
+            for formd_product in formd_products:
+                best_match = None
+                best_similarity = 0.0
+                
+                for invoice_product in invoice_products:
+                    # Compare descriptions
+                    formd_desc = formd_product.get("Product Description", "")
+                    invoice_desc = invoice_product.get("description", "")
                     
-                    # Use appropriate comparison method
-                    if comparison_type == "number":
-                        is_match, similarity = self.fuzzy_match_number(str(formd_val), str(invoice_val))
-                    elif comparison_type == "general":
-                        is_match, similarity = self.fuzzy_match(str(formd_val), str(invoice_val))
-                    else:
-                        is_match, similarity = self.fuzzy_match(str(formd_val), str(invoice_val))
+                    desc_match, desc_sim = self.fuzzy_match_description(formd_desc, invoice_desc)
                     
-                    if is_match:
+                    if desc_sim > best_similarity:
+                        best_similarity = desc_sim
+                        best_match = invoice_product
+                
+                if best_match and best_similarity > 0.3:
+                    comparison_result["product_matches"].append({
+                        "formd_item": formd_product.get("Item Number", ""),
+                        "formd_description": formd_product.get("Product Description", ""),
+                        "invoice_description": best_match.get("description", ""),
+                        "similarity": round(best_similarity, 3),
+                        "match": best_similarity >= 0.8
+                    })
+                    
+                    if best_similarity >= 0.8:
                         matches += 1
-                        comparison_result["matching_fields"].append({
-                            "field": f"{formd_field} / {invoice_field}",
-                            "formd_value": formd_val,
-                            "invoice_value": invoice_val,
-                            "similarity": round(similarity, 3)
-                        })
-                    elif similarity > 0.3:  # Still record partial matches
-                        comparison_result["discrepancies"].append({
-                            "field": f"{formd_field} / {invoice_field}",
-                            "formd_value": formd_val,
-                            "invoice_value": invoice_val,
-                            "similarity": round(similarity, 3)
-                        })
+                    total_comparisons += 1
+        
+        # Compare totals
+        total_comparisons += 1
+        formd_total_weight = formd_data.get("Total Gross weight", "")
+        invoice_total_weight = invoice_data.get("total_gross_weight_kgs", "")
+        bl_total_weight = bl_data.get("gross_weight", "")
+        
+        if formd_total_weight and invoice_total_weight:
+            weight_match, weight_sim = self.fuzzy_match_weight(formd_total_weight, invoice_total_weight)
+            if weight_match:
+                matches += 1
+                comparison_result["matching_fields"].append({
+                    "field": "Total Gross Weight",
+                    "formd_value": formd_total_weight,
+                    "invoice_value": invoice_total_weight,
+                    "similarity": round(weight_sim, 3)
+                })
         
         comparison_result["total_fields_compared"] = total_comparisons
         
@@ -553,101 +639,110 @@ Important:
         return comparison_result
 
     def validate_product_info(self, formd_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate HS CODE first, then check if Form D description exists in extracted Product Description"""
+        """Validate ALL products from Form D against product database"""
         product_validation = {
             "found_matches": False,
-            "matches": [],
-            "validation_process": "Match HS codes first, then validate Form D description existence"
+            "product_validations": [],
+            "validation_process": "Match HS codes first, then validate Form D description"
         }
         
         if self.product_data is None:
             product_validation["error"] = "Product data not available"
             return product_validation
         
-        formd_description = str(formd_data.get("Product Description", "")).strip()
-        formd_hs_code = str(formd_data.get("HS CODE", "")).strip()
+        formd_products = formd_data.get("products", [])
         
-        if not formd_hs_code or formd_hs_code == "Not found":
-            product_validation["error"] = "Form D HS CODE not found"
+        if not formd_products:
+            product_validation["error"] = "No products found in Form D"
             return product_validation
         
-        if not formd_description or formd_description == "Not found":
-            product_validation["error"] = "Form D description not found"
-            return product_validation
+        all_products_valid = True
         
-        # Normalize the Form D description for better matching
-        normalized_formd_desc = formd_description.upper().replace(" ", "")
-        
-        best_matches = []
-        
-        # First, find matching HS codes in product file
-        for _, row in self.product_data.iterrows():
-            hs_code_from_csv = str(row.get("H.S code", "")).strip()
+        for product in formd_products:
+            formd_description = str(product.get("Product Description", "")).strip()
+            formd_hs_code = str(product.get("HS CODE", "")).strip()
+            item_number = product.get("Item Number", "")
             
-            if hs_code_from_csv and hs_code_from_csv != "Not found":
-                # Check if HS codes match (exact or fuzzy)
-                hs_code_match = False
-                hs_code_similarity = 0.0
+            product_result = {
+                "item_number": item_number,
+                "formd_hs_code": formd_hs_code,
+                "formd_description": formd_description,
+                "matches": [],
+                "found_match": False
+            }
+            
+            if not formd_hs_code or formd_hs_code == "Not found":
+                product_result["error"] = "HS CODE not found"
+                all_products_valid = False
+                product_validation["product_validations"].append(product_result)
+                continue
+            
+            if not formd_description or formd_description == "Not found":
+                product_result["error"] = "Product description not found"
+                all_products_valid = False
+                product_validation["product_validations"].append(product_result)
+                continue
+            
+            normalized_formd_desc = formd_description.upper().replace(" ", "")
+            best_matches = []
+            
+            for _, row in self.product_data.iterrows():
+                hs_code_from_csv = str(row.get("H.S code", "")).strip()
                 
-                if formd_hs_code == hs_code_from_csv:
-                    hs_code_match = True
-                    hs_code_similarity = 1.0
-                else:
-                    # Check partial match for HS codes
-                    _, hs_code_similarity = self.fuzzy_match(formd_hs_code, hs_code_from_csv, 0.8)
-                    hs_code_match = hs_code_similarity >= 0.8
-                
-                # If HS code matches, then check if Form D description from CSV exists in extracted description
-                if hs_code_match:
-                    form_d_desc_from_csv = str(row.get("Form D description", "")).strip()
+                if hs_code_from_csv and hs_code_from_csv != "Not found":
+                    hs_code_match = False
+                    hs_code_similarity = 0.0
                     
-                    if form_d_desc_from_csv and form_d_desc_from_csv != "Not found":
-                        # Normalize CSV Form D description for comparison
-                        normalized_csv_desc = form_d_desc_from_csv.upper().replace(" ", "")
+                    if formd_hs_code == hs_code_from_csv:
+                        hs_code_match = True
+                        hs_code_similarity = 1.0
+                    else:
+                        _, hs_code_similarity = self.fuzzy_match(formd_hs_code, hs_code_from_csv, 0.8)
+                        hs_code_match = hs_code_similarity >= 0.8
+                    
+                    if hs_code_match:
+                        form_d_desc_from_csv = str(row.get("Form D description", "")).strip()
                         
-                        # Check if CSV Form D description exists within the extracted Form D description
-                        description_exists = normalized_csv_desc in normalized_formd_desc
-                        
-                        # Calculate similarity score for reference
-                        _, description_similarity = self.fuzzy_match_description(formd_description, form_d_desc_from_csv)
-                        
-                        # Also check reverse - if extracted description exists in CSV description (partial match)
-                        reverse_match = False
-                        if len(normalized_csv_desc) > 20:  # Only for reasonably long descriptions
-                            # Check if significant portion of CSV description is in Form D description
-                            words_in_csv = [word for word in normalized_csv_desc.split() if len(word) > 3]
-                            if words_in_csv:
-                                matches_found = sum(1 for word in words_in_csv if word in normalized_formd_desc)
-                                reverse_match = (matches_found / len(words_in_csv)) >= 0.7
-                        
-                        overall_match = description_exists or reverse_match or description_similarity >= 0.8
-                        
-                        best_matches.append({
-                            "formd_hs_code": formd_hs_code,
-                            "csv_hs_code": hs_code_from_csv,
-                            "hs_code_match": hs_code_match,
-                            "hs_code_similarity": round(hs_code_similarity, 3),
-                            "formd_description": formd_description,
-                            "csv_form_d_description": form_d_desc_from_csv,
-                            "description_exists_in_formd": description_exists,
-                            "reverse_partial_match": reverse_match,
-                            "description_similarity": round(description_similarity, 3),
-                            "sap_code": row.get("SAP code", "Not found"),
-                            "overall_match": overall_match,
-                            "match_reason": self._get_match_reason(description_exists, reverse_match, description_similarity)
-                        })
+                        if form_d_desc_from_csv and form_d_desc_from_csv != "Not found":
+                            normalized_csv_desc = form_d_desc_from_csv.upper().replace(" ", "")
+                            description_exists = normalized_csv_desc in normalized_formd_desc
+                            _, description_similarity = self.fuzzy_match_description(formd_description, form_d_desc_from_csv)
+                            
+                            reverse_match = False
+                            if len(normalized_csv_desc) > 20:
+                                words_in_csv = [word for word in normalized_csv_desc.split() if len(word) > 3]
+                                if words_in_csv:
+                                    matches_found = sum(1 for word in words_in_csv if word in normalized_formd_desc)
+                                    reverse_match = (matches_found / len(words_in_csv)) >= 0.7
+                            
+                            overall_match = description_exists or reverse_match or description_similarity >= 0.8
+                            
+                            best_matches.append({
+                                "csv_hs_code": hs_code_from_csv,
+                                "hs_code_similarity": round(hs_code_similarity, 3),
+                                "csv_form_d_description": form_d_desc_from_csv,
+                                "description_similarity": round(description_similarity, 3),
+                                "sap_code": row.get("SAP code", "Not found"),
+                                "overall_match": overall_match
+                            })
+            
+            best_matches.sort(key=lambda x: (x["hs_code_similarity"], x["description_similarity"]), reverse=True)
+            product_result["matches"] = best_matches
+            product_result["found_match"] = any(match["overall_match"] for match in best_matches)
+            
+            if not product_result["found_match"]:
+                all_products_valid = False
+            
+            product_validation["product_validations"].append(product_result)
         
-        # Sort by HS code similarity first, then by description match quality
-        best_matches.sort(key=lambda x: (x["hs_code_similarity"], x["description_similarity"]), reverse=True)
-        
-        product_validation["matches"] = best_matches
-        product_validation["found_matches"] = any(match["overall_match"] for match in best_matches)
+        product_validation["found_matches"] = all_products_valid
+        product_validation["total_products"] = len(formd_products)
+        product_validation["valid_products"] = sum(1 for p in product_validation["product_validations"] if p.get("found_match"))
         
         return product_validation
     
-    
     def validate_food_supplement(self, bl_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate if 'FOOD SUPPLEMENT' is contained in BL description of goods"""
+        """Validate if 'FOOD SUPPLEMENT' is in BL description"""
         food_supplement_validation = {
             "contains_food_supplement": False,
             "description_of_goods": "",
@@ -663,11 +758,9 @@ Important:
         
         food_supplement_validation["description_of_goods"] = description
         
-        # Normalize description for comparison (remove spaces, uppercase)
         normalized_desc = description.upper().replace(" ", "").replace("-", "").replace("_", "")
         food_supplement_validation["normalized_description"] = normalized_desc
         
-        # Check for various forms of "FOOD SUPPLEMENT"
         search_terms = ["FOODSUPPLEMENT", "FOODSUPPLEMENTS", "DIETARYSUPPLEMENT"]
         
         for term in search_terms:
@@ -677,7 +770,6 @@ Important:
                 food_supplement_validation["match_details"]["original_description"] = description
                 break
         
-        # Also check with spaces for more flexible matching
         if not food_supplement_validation["contains_food_supplement"]:
             upper_desc = description.upper()
             flexible_terms = ["FOOD SUPPLEMENT", "FOOD SUPPLEMENTS", "DIETARY SUPPLEMENT"]
@@ -691,23 +783,12 @@ Important:
         
         return food_supplement_validation
 
-    def _get_match_reason(self, description_exists: bool, reverse_match: bool, similarity: float) -> str:
-        """Get the reason for the match result"""
-        if description_exists:
-            return "CSV description found in Form D description"
-        elif reverse_match:
-            return "Significant overlap between descriptions"
-        elif similarity >= 0.8:
-            return "High similarity score"
-        else:
-            return "No significant match found"
-
     def validate_company_info(self, formd_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate Consignee's address by first matching Company name"""
+        """Validate Consignee's address by matching Company name"""
         company_validation = {
             "found_matches": False,
             "matches": [],
-            "validation_process": "Match Company name first, then compare combined name+address with CSV address"
+            "validation_process": "Match Company name first, then compare combined name+address"
         }
         
         if self.company_data is None:
@@ -723,7 +804,6 @@ Important:
         
         best_matches = []
         
-        # Find best matching company names
         for _, row in self.company_data.iterrows():
             company_name_from_csv = str(row.get("Company name", "")).strip()
             if company_name_from_csv and company_name_from_csv != "Not found":
@@ -732,12 +812,10 @@ Important:
                 if is_match:
                     address_from_csv = str(row.get("Address", "")).strip()
                     
-                    # Check if addresses match - now combining name + address from Form D
                     address_match = False
                     address_similarity = 0.0
                     
                     if consignee_address and consignee_address != "Not found" and address_from_csv:
-                        # Combine Form D consignee name and address for comparison
                         combined_formd_info = f"{consignee_name} {consignee_address}".strip()
                         address_match, address_similarity = self.fuzzy_match(combined_formd_info, address_from_csv, 0.6)
                     
@@ -753,7 +831,6 @@ Important:
                         "overall_match": address_match and similarity >= 0.7
                     })
         
-        # Sort by company name similarity
         best_matches.sort(key=lambda x: x["company_name_similarity"], reverse=True)
         
         company_validation["matches"] = best_matches
@@ -761,9 +838,8 @@ Important:
         
         return company_validation
 
-
     def validate_against_csv(self, formd_data: Dict[str, Any], invoice_data: Dict[str, Any], bl_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate extracted data against CSV files with improved logic"""
+        """Validate extracted data against CSV files"""
         validation_result = {
             "product_validation": self.validate_product_info(formd_data),
             "company_validation": self.validate_company_info(formd_data),
@@ -773,14 +849,14 @@ Important:
         return validation_result
 
     def process_documents(self, formd_pdf_path: str, invoice_pdf_path: str, bl_pdf_path: str, 
-                        formd_page: int = 0, invoice_page: int = 2, bl_page: int = 0,
-                        rotate_invoice: bool = True, crop_bottom_percent: float = 30) -> Dict[str, Any]:
-        """Process Form D, invoice, and BL files, compare them, and validate against CSV data"""
+                    formd_pages: List[int] = None, invoice_page: int = 2, bl_pages: List[int] = None,
+                    rotate_invoice: bool = True, crop_bottom_percent: float = 18) -> Dict[str, Any]:
+        """Process Form D, invoice, and BL files - supports multiple products and containers"""
         try:
             print("="*60)
             print("EXTRACTING FORM D INFORMATION")
             print("="*60)
-            formd_data = self.extract_formd_info(formd_pdf_path, formd_page)
+            formd_data = self.extract_formd_info(formd_pdf_path, formd_pages)
             print("Form D Data:")
             print(json.dumps(formd_data, indent=2))
             
@@ -794,7 +870,7 @@ Important:
             print("\n" + "="*60)
             print("EXTRACTING BL (BILL OF LADING) INFORMATION")
             print("="*60)
-            bl_data = self.extract_bl_info(bl_pdf_path, bl_page, crop_bottom_percent)
+            bl_data = self.extract_bl_info(bl_pdf_path, bl_pages, crop_bottom_percent)
             print("BL Data:")
             print(json.dumps(bl_data, indent=2))
             
@@ -812,7 +888,6 @@ Important:
             print("Validation Result:")
             print(json.dumps(validation_result, indent=2))
             
-            # Compile final result
             final_result = {
                 "formd_data": formd_data,
                 "invoice_data": invoice_data,
@@ -829,7 +904,7 @@ Important:
             return {"error": str(e)}
 
     def generate_overall_assessment(self, comparison_result: Dict[str, Any], validation_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate an overall assessment of the document relationship and validity"""
+        """Generate overall assessment"""
         assessment = {
             "documents_match": comparison_result.get("documents_related", False),
             "confidence_level": "Low",
@@ -847,7 +922,6 @@ Important:
         else:
             assessment["confidence_level"] = "Low"
         
-        # Check validation results
         company_valid = validation_result.get("company_validation", {}).get("found_matches", False)
         product_valid = validation_result.get("product_validation", {}).get("found_matches", False)
         food_supplement_valid = validation_result.get("food_supplement_validation", {}).get("contains_food_supplement", False)
@@ -861,7 +935,6 @@ Important:
         else:
             assessment["validation_status"] = "Invalid"
         
-        # Generate recommendations
         if not assessment["documents_match"]:
             assessment["recommendations"].append("Documents may not be related - verify manually")
         
@@ -877,7 +950,6 @@ Important:
         if confidence_score < 0.6:
             assessment["recommendations"].append("Low confidence match - manual review recommended")
         
-        # Generate summary
         total_fields = comparison_result.get("total_fields_compared", 0)
         matching_fields = len(comparison_result.get("matching_fields", []))
         
@@ -895,28 +967,44 @@ Important:
         overall = result.get("overall_assessment", {})
         comparison = result.get("comparison", {})
         validation = result.get("validation", {})
+        formd_data = result.get("formd_data", {})
         
         print(f"Document Relationship: {'RELATED' if overall.get('documents_match') else 'NOT RELATED'}")
         print(f"Confidence Level: {overall.get('confidence_level', 'Unknown')}")
         print(f"Validation Status: {overall.get('validation_status', 'Unknown')}")
         
+        # Show product count
+        total_products = formd_data.get("total_products", 0)
+        print(f"\nTotal Products in Form D: {total_products}")
+        
         if comparison.get("matching_fields"):
-            print(f"\nMatching Fields ({len(comparison['matching_fields'])}):")
+            print(f"\nMatching Common Fields ({len(comparison['matching_fields'])}):")
             for match in comparison["matching_fields"]:
                 sim_score = match.get('similarity', 0)
                 print(f"  • {match['field']}: {sim_score:.1%} similarity")
         
-        # Print validation details
+        # Show product matches
+        product_matches = comparison.get("product_matches", [])
+        if product_matches:
+            print(f"\nProduct Matches ({len(product_matches)}):")
+            for match in product_matches:
+                print(f"  • Item {match['formd_item']}: {match['similarity']:.1%} similarity {'✓' if match['match'] else '✗'}")
+        
+        # Validation details
         print(f"\nValidation Results:")
         product_val = validation.get("product_validation", {})
         company_val = validation.get("company_validation", {})
         food_supplement_val = validation.get("food_supplement_validation", {})
         
         print(f"  • Product Validation: {'PASS' if product_val.get('found_matches') else 'FAIL'}")
-        if product_val.get("matches"):
-            best_product = product_val["matches"][0]
-            print(f"    - Best match: {best_product.get('description_similarity', 0):.1%} description similarity")
-            print(f"    - HS Code match: {'YES' if best_product.get('hs_code_match') else 'NO'}")
+        if product_val.get("product_validations"):
+            valid_count = product_val.get("valid_products", 0)
+            total_count = product_val.get("total_products", 0)
+            print(f"    - Valid products: {valid_count}/{total_count}")
+            for prod_val in product_val["product_validations"]:
+                item_num = prod_val.get("item_number", "?")
+                found = prod_val.get("found_match", False)
+                print(f"      Item {item_num}: {'✓ VALID' if found else '✗ INVALID'}")
         
         print(f"  • Company Validation: {'PASS' if company_val.get('found_matches') else 'FAIL'}")
         if company_val.get("matches"):
@@ -927,8 +1015,6 @@ Important:
         print(f"  • Food Supplement Validation: {'PASS' if food_supplement_val.get('contains_food_supplement') else 'FAIL'}")
         if food_supplement_val.get("match_details"):
             print(f"    - Matched term: {food_supplement_val['match_details'].get('matched_term', 'N/A')}")
-        elif food_supplement_val.get("description_of_goods"):
-            print(f"    - BL Description: {food_supplement_val['description_of_goods'][:100]}...")
         
         if overall.get("recommendations"):
             print(f"\nRecommendations:")
@@ -939,74 +1025,71 @@ Important:
 
 def main():
     if len(sys.argv) < 4:
-        print("Usage: python auditor.py <formd_pdf_path> <invoice_pdf_path> <bl_pdf_path> [formd_page] [invoice_page] [bl_page] [api_key] [model] [--no-rotate] [--crop-bottom=X]")
-        print("Example: python auditor.py formd.pdf invoice.pdf bl.pdf 0 2 0")
-        print("Example with API key: python auditor.py formd.pdf invoice.pdf bl.pdf 0 2 0 your_api_key")
-        print("Example with custom model: python auditor.py formd.pdf invoice.pdf bl.pdf 0 2 0 your_api_key gpt-4o-mini")
-        print("Example without rotation: python auditor.py formd.pdf invoice.pdf bl.pdf 0 2 0 your_api_key gpt-4o --no-rotate")
-        print("Example with bottom cropping: python auditor.py formd.pdf invoice.pdf bl.pdf 0 2 0 your_api_key gpt-4o --crop-bottom=15")
-        print("\nNote: If no API key is provided, OPENAI_API_KEY environment variable will be used")
-        print("Note: By default, invoice images are rotated 90 degrees clockwise. Use --no-rotate to disable.")
-        print("Note: By default, 30% of the bottom is cropped for BL and invoice. Use --crop-bottom=X to set percentage (0 to disable).")
-        print("\nNote: BL (Bill of Lading) PDF is now REQUIRED")
+        print("Usage: python auditor.py <formd_pdf> <invoice_pdf> <bl_pdf> [options]")
+        print("\nOptions:")
+        print("  --formd-pages=0,1,2    Comma-separated page numbers for Form D (default: 0)")
+        print("  --invoice-page=2       Page number for invoice (default: 2)")
+        print("  --bl-pages=0,1         Comma-separated page numbers for BL (default: 0)")
+        print("  --api-key=KEY          OpenAI API key")
+        print("  --model=MODEL          OpenAI model (default: gpt-4o)")
+        print("  --no-rotate            Don't rotate invoice image")
+        print("  --crop-bottom=30       Crop percentage from bottom (default: 30)")
+        print("\nExamples:")
+        print("  python auditor.py formd.pdf invoice.pdf bl.pdf")
+        print("  python auditor.py formd.pdf invoice.pdf bl.pdf --formd-pages=0,1,2 --bl-pages=0,1")
+        print("  python auditor.py formd.pdf invoice.pdf bl.pdf --formd-pages=0 --invoice-page=2 --bl-pages=0")
         sys.exit(1)
     
     formd_pdf_path = sys.argv[1]
     invoice_pdf_path = sys.argv[2]
     bl_pdf_path = sys.argv[3]
     
-    # Initialize default values
-    formd_page = 0
+    # Default values
+    formd_pages = [0]
     invoice_page = 2
-    bl_page = 0
+    bl_pages = [0]
     api_key = None
     model = "gpt-4o"
     rotate_invoice = True
-    crop_bottom_percent = 30.0  # Default 30% crop
+    crop_bottom_percent = 18.0
     
     # Parse arguments
-    arg_index = 4
-    positional_index = 0  # Track which positional argument we're on
-    
-    while arg_index < len(sys.argv):
-        arg = sys.argv[arg_index]
-        
-        if arg == '--no-rotate':
+    for arg in sys.argv[4:]:
+        if arg.startswith('--formd-pages='):
+            try:
+                pages_str = arg.split('=')[1]
+                formd_pages = [int(p.strip()) for p in pages_str.split(',')]
+                print(f"Form D pages set to: {formd_pages}")
+            except ValueError:
+                print(f"Warning: Invalid formd-pages format '{arg}'. Using default [0].")
+        elif arg.startswith('--invoice-page='):
+            try:
+                invoice_page = int(arg.split('=')[1])
+                print(f"Invoice page set to: {invoice_page}")
+            except ValueError:
+                print(f"Warning: Invalid invoice-page '{arg}'. Using default 2.")
+        elif arg.startswith('--bl-pages='):
+            try:
+                pages_str = arg.split('=')[1]
+                bl_pages = [int(p.strip()) for p in pages_str.split(',')]
+                print(f"BL pages set to: {bl_pages}")
+            except ValueError:
+                print(f"Warning: Invalid bl-pages format '{arg}'. Using default [0].")
+        elif arg.startswith('--api-key='):
+            api_key = arg.split('=')[1]
+        elif arg.startswith('--model='):
+            model = arg.split('=')[1]
+        elif arg == '--no-rotate':
             rotate_invoice = False
         elif arg.startswith('--crop-bottom='):
             try:
                 crop_bottom_percent = float(arg.split('=')[1])
                 if crop_bottom_percent < 0 or crop_bottom_percent > 50:
                     print("Warning: crop-bottom percentage should be between 0 and 50. Using default 30%.")
-                    crop_bottom_percent = 30.0
+                    crop_bottom_percent = 18.0
             except ValueError:
                 print("Warning: Invalid crop-bottom value. Using default 30%.")
-                crop_bottom_percent = 30.0
-        else:
-            # Handle positional arguments
-            if positional_index == 0:  # formd_page
-                try:
-                    formd_page = int(arg)
-                except ValueError:
-                    print(f"Warning: Invalid formd_page '{arg}'. Using default 0.")
-            elif positional_index == 1:  # invoice_page
-                try:
-                    invoice_page = int(arg)
-                except ValueError:
-                    print(f"Warning: Invalid invoice_page '{arg}'. Using default 2.")
-            elif positional_index == 2:  # bl_page
-                try:
-                    bl_page = int(arg)
-                except ValueError:
-                    print(f"Warning: Invalid bl_page '{arg}'. Using default 0.")
-            elif positional_index == 3:  # api_key
-                api_key = arg
-            elif positional_index == 4:  # model
-                model = arg
-            
-            positional_index += 1
-        
-        arg_index += 1
+                crop_bottom_percent = 18.0
     
     # Validate file paths
     if not os.path.exists(formd_pdf_path):
@@ -1021,20 +1104,19 @@ def main():
         print(f"Error: BL file not found: {bl_pdf_path}")
         sys.exit(1)
     
-    # Check if API key is available
     if not api_key and not os.getenv('OPENAI_API_KEY'):
         print("Error: OpenAI API key not provided. Please either:")
-        print("1. Pass API key as argument: python auditor.py ... your_api_key")
+        print("1. Use --api-key=your_key")
         print("2. Set OPENAI_API_KEY environment variable")
         sys.exit(1)
     
     try:
         processor = DocumentProcessor(api_key=api_key, model=model)
         
-        print(f"Processing settings:")
-        print(f"  - Form D page: {formd_page}")
+        print(f"\nProcessing settings:")
+        print(f"  - Form D pages: {formd_pages}")
         print(f"  - Invoice page: {invoice_page}")
-        print(f"  - BL page: {bl_page}")
+        print(f"  - BL pages: {bl_pages}")
         print(f"  - Rotate invoice: {'Yes' if rotate_invoice else 'No'}")
         print(f"  - Crop bottom: {crop_bottom_percent}%")
         print(f"  - Model: {model}")
@@ -1043,17 +1125,15 @@ def main():
             formd_pdf_path, 
             invoice_pdf_path,
             bl_pdf_path,
-            formd_page, 
+            formd_pages,
             invoice_page,
-            bl_page,
+            bl_pages,
             rotate_invoice, 
             crop_bottom_percent
         )
         
-        # Print summary report
         processor.print_summary_report(result)
         
-        # Save results to file
         base_name = os.path.splitext(os.path.basename(formd_pdf_path))[0]
         invoice_base = os.path.splitext(os.path.basename(invoice_pdf_path))[0]
         bl_base = os.path.splitext(os.path.basename(bl_pdf_path))[0]
@@ -1075,7 +1155,7 @@ def main():
 if __name__ == "__main__":
     start_time = time.time()
     
-    main()   # run your program
+    main()
     
     end_time = time.time()
     elapsed = end_time - start_time
