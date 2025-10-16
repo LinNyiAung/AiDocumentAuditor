@@ -213,13 +213,13 @@ class DocumentProcessor:
     {
     "products": [
         {
-        "Item Number": "from column 5",
-        "HS CODE": "from column 7",
-        "Product Description": "full description from column 7",
-        "CTNS": "from column 9",
-        "Gross weight": "from column 9",
-        "Number of invoices": "from column 10",
-        "Date of invoices": "from column 10"
+        "Item Number": "...",
+        "HS CODE": "...",
+        "Product Description": "...",
+        "CTNS": "...",
+        "Gross weight": "...",
+        "Number of invoices": "...",
+        "Date of invoices": "..."
         }
     ]
     }
@@ -524,17 +524,26 @@ Important:
         return similarity >= threshold, similarity
 
     def compare_documents(self, formd_data: Dict[str, Any], invoice_data: Dict[str, Any], bl_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Compare Form D, invoice, and BL data - handles multiple products"""
+        """Compare Form D, invoice, and BL data - handles single and multiple products"""
         comparison_result = {
             "documents_related": False,
             "matching_fields": [],
             "discrepancies": [],
             "confidence_score": 0.0,
-            "total_fields_compared": 0,
-            "product_matches": []
+            "total_fields_compared": 0
         }
         
-        # Compare common fields (non-product)
+        matches = 0
+        total_comparisons = 0
+        
+        # Get products to determine if single or multiple
+        formd_products = formd_data.get("products", [])
+        is_single_product = len(formd_products) == 1
+        
+        print(f"\nDocument comparison mode: {'SINGLE PRODUCT' if is_single_product else 'MULTIPLE PRODUCTS'}")
+        print(f"Number of products in Form D: {len(formd_products)}")
+        
+        # Common fields for both single and multiple products
         common_field_mappings = [
             ("Consignee's business name", "ship_to_name", "consignee_name", "general"),
             ("Consignee's address", "ship_to_address", "consignee_address", "general"),
@@ -542,10 +551,7 @@ Important:
             ("Exporter's address", "shipped_by_address", "shipper_address", "general"),
         ]
         
-        matches = 0
-        total_comparisons = 0
-        
-        # Process common field comparisons
+        # Process common field comparisons (3-way)
         for formd_field, invoice_field, bl_field, comparison_type in common_field_mappings:
             if formd_field in formd_data and invoice_field in invoice_data and bl_field in bl_data:
                 total_comparisons += 1
@@ -567,7 +573,10 @@ Important:
                         "formd_value": formd_val,
                         "invoice_value": invoice_val,
                         "bl_value": bl_val,
-                        "similarity": round(avg_similarity, 3)
+                        "similarity": round(avg_similarity, 3),
+                        "formd_invoice_sim": round(sim1, 3),
+                        "formd_bl_sim": round(sim2, 3),
+                        "invoice_bl_sim": round(sim3, 3)
                     })
                 elif avg_similarity > 0.1:
                     comparison_result["discrepancies"].append({
@@ -575,59 +584,270 @@ Important:
                         "formd_value": formd_val,
                         "invoice_value": invoice_val,
                         "bl_value": bl_val,
+                        "similarity": round(avg_similarity, 3),
+                        "formd_invoice_sim": round(sim1, 3),
+                        "formd_bl_sim": round(sim2, 3),
+                        "invoice_bl_sim": round(sim3, 3)
+                    })
+        
+        # Handle single product scenario
+        if is_single_product and formd_products:
+            product = formd_products[0]
+            
+            # Gross weight comparison (3-way)
+            formd_weight = product.get("Gross weight", "")
+            invoice_weight = invoice_data.get("total_gross_weight_kgs", "")
+            bl_weight = bl_data.get("total_gross_weight", "")
+            
+            if formd_weight and invoice_weight and bl_weight:
+                total_comparisons += 1
+                match1, sim1 = self.fuzzy_match_weight(formd_weight, invoice_weight)
+                match2, sim2 = self.fuzzy_match_weight(formd_weight, bl_weight)
+                match3, sim3 = self.fuzzy_match_weight(invoice_weight, bl_weight)
+                
+                avg_similarity = (sim1 + sim2 + sim3) / 3
+                all_match = match1 and match2 and match3
+                
+                if all_match:
+                    matches += 1
+                    comparison_result["matching_fields"].append({
+                        "field": "Gross weight / total_gross_weight_kgs / total_gross_weight",
+                        "formd_value": formd_weight,
+                        "invoice_value": invoice_weight,
+                        "bl_value": bl_weight,
+                        "similarity": round(avg_similarity, 3),
+                        "formd_invoice_sim": round(sim1, 3),
+                        "formd_bl_sim": round(sim2, 3),
+                        "invoice_bl_sim": round(sim3, 3)
+                    })
+                elif avg_similarity > 0.1:
+                    comparison_result["discrepancies"].append({
+                        "field": "Gross weight / total_gross_weight_kgs / total_gross_weight",
+                        "formd_value": formd_weight,
+                        "invoice_value": invoice_weight,
+                        "bl_value": bl_weight,
                         "similarity": round(avg_similarity, 3)
                     })
-        
-        # Compare products
-        formd_products = formd_data.get("products", [])
-        invoice_products = invoice_data.get("products", [])
-        
-        if formd_products and invoice_products:
-            print(f"\nComparing products: {len(formd_products)} from Form D vs {len(invoice_products)} from Invoice")
             
-            for formd_product in formd_products:
-                best_match = None
-                best_similarity = 0.0
+            # CTNS comparison (3-way)
+            formd_ctns = product.get("CTNS", "")
+            invoice_ctns = invoice_data.get("packed_in", "")
+            bl_ctns = bl_data.get("number_of_cartons", "")
+            
+            if formd_ctns and invoice_ctns and bl_ctns:
+                total_comparisons += 1
+                match1, sim1 = self.fuzzy_match_number(formd_ctns, invoice_ctns)
+                match2, sim2 = self.fuzzy_match_number(formd_ctns, bl_ctns)
+                match3, sim3 = self.fuzzy_match_number(invoice_ctns, bl_ctns)
                 
-                for invoice_product in invoice_products:
-                    # Compare descriptions
-                    formd_desc = formd_product.get("Product Description", "")
-                    invoice_desc = invoice_product.get("description", "")
-                    
-                    desc_match, desc_sim = self.fuzzy_match_description(formd_desc, invoice_desc)
-                    
-                    if desc_sim > best_similarity:
-                        best_similarity = desc_sim
-                        best_match = invoice_product
+                avg_similarity = (sim1 + sim2 + sim3) / 3
+                all_match = match1 and match2 and match3
                 
-                if best_match and best_similarity > 0.3:
-                    comparison_result["product_matches"].append({
-                        "formd_item": formd_product.get("Item Number", ""),
-                        "formd_description": formd_product.get("Product Description", ""),
-                        "invoice_description": best_match.get("description", ""),
-                        "similarity": round(best_similarity, 3),
-                        "match": best_similarity >= 0.8
+                if all_match:
+                    matches += 1
+                    comparison_result["matching_fields"].append({
+                        "field": "CTNS / packed_in / number_of_cartons",
+                        "formd_value": formd_ctns,
+                        "invoice_value": invoice_ctns,
+                        "bl_value": bl_ctns,
+                        "similarity": round(avg_similarity, 3),
+                        "formd_invoice_sim": round(sim1, 3),
+                        "formd_bl_sim": round(sim2, 3),
+                        "invoice_bl_sim": round(sim3, 3)
                     })
-                    
-                    if best_similarity >= 0.8:
-                        matches += 1
-                    total_comparisons += 1
+                elif avg_similarity > 0.1:
+                    comparison_result["discrepancies"].append({
+                        "field": "CTNS / packed_in / number_of_cartons",
+                        "formd_value": formd_ctns,
+                        "invoice_value": invoice_ctns,
+                        "bl_value": bl_ctns,
+                        "similarity": round(avg_similarity, 3)
+                    })
+            
+            # Number of invoices comparison (2-way: Form D vs Invoice)
+            formd_num_invoices = product.get("Number of invoices", "")
+            invoice_number = invoice_data.get("number", "")
+            
+            if formd_num_invoices and invoice_number:
+                total_comparisons += 1
+                is_match, similarity = self.fuzzy_match_number(formd_num_invoices, invoice_number)
+                
+                if is_match:
+                    matches += 1
+                    comparison_result["matching_fields"].append({
+                        "field": "Number of invoices / number",
+                        "formd_value": formd_num_invoices,
+                        "invoice_value": invoice_number,
+                        "similarity": round(similarity, 3)
+                    })
+                elif similarity > 0.3:
+                    comparison_result["discrepancies"].append({
+                        "field": "Number of invoices / number",
+                        "formd_value": formd_num_invoices,
+                        "invoice_value": invoice_number,
+                        "similarity": round(similarity, 3)
+                    })
+            
+            # Date of invoices comparison (2-way: Form D vs Invoice)
+            formd_date = product.get("Date of invoices", "")
+            invoice_date = invoice_data.get("invoice_date", "")
+            
+            if formd_date and invoice_date:
+                total_comparisons += 1
+                is_match, similarity = self.fuzzy_match(formd_date, invoice_date)
+                
+                if is_match:
+                    matches += 1
+                    comparison_result["matching_fields"].append({
+                        "field": "Date of invoices / invoice_date",
+                        "formd_value": formd_date,
+                        "invoice_value": invoice_date,
+                        "similarity": round(similarity, 3)
+                    })
+                elif similarity > 0.3:
+                    comparison_result["discrepancies"].append({
+                        "field": "Date of invoices / invoice_date",
+                        "formd_value": formd_date,
+                        "invoice_value": invoice_date,
+                        "similarity": round(similarity, 3)
+                    })
         
-        # Compare totals
-        total_comparisons += 1
-        formd_total_weight = formd_data.get("Total Gross weight", "")
-        invoice_total_weight = invoice_data.get("total_gross_weight_kgs", "")
-        bl_total_weight = bl_data.get("gross_weight", "")
+        # Handle multiple products scenario
+        elif len(formd_products) > 1:
+            # Total gross weight comparison (2-way: Invoice vs BL)
+            invoice_weight = invoice_data.get("total_gross_weight_kgs", "")
+            bl_weight = bl_data.get("total_gross_weight", "")
+            
+            if invoice_weight and bl_weight:
+                total_comparisons += 1
+                is_match, similarity = self.fuzzy_match_weight(invoice_weight, bl_weight)
+                
+                if is_match:
+                    matches += 1
+                    comparison_result["matching_fields"].append({
+                        "field": "total_gross_weight_kgs / total_gross_weight",
+                        "invoice_value": invoice_weight,
+                        "bl_value": bl_weight,
+                        "similarity": round(similarity, 3)
+                    })
+                elif similarity > 0.1:
+                    comparison_result["discrepancies"].append({
+                        "field": "total_gross_weight_kgs / total_gross_weight",
+                        "invoice_value": invoice_weight,
+                        "bl_value": bl_weight,
+                        "similarity": round(similarity, 3)
+                    })
+            
+            # CTNS comparison - last item from Form D (3-way)
+            last_product = formd_products[-1]
+            formd_ctns = last_product.get("CTNS", "")
+            invoice_ctns = invoice_data.get("packed_in", "")
+            bl_ctns = bl_data.get("number_of_cartons", "")
+            
+            if formd_ctns and invoice_ctns and bl_ctns:
+                total_comparisons += 1
+                match1, sim1 = self.fuzzy_match_number(formd_ctns, invoice_ctns)
+                match2, sim2 = self.fuzzy_match_number(formd_ctns, bl_ctns)
+                match3, sim3 = self.fuzzy_match_number(invoice_ctns, bl_ctns)
+                
+                avg_similarity = (sim1 + sim2 + sim3) / 3
+                all_match = match1 and match2 and match3
+                
+                if all_match:
+                    matches += 1
+                    comparison_result["matching_fields"].append({
+                        "field": f"CTNS (last item) / packed_in / number_of_cartons",
+                        "formd_value": formd_ctns,
+                        "invoice_value": invoice_ctns,
+                        "bl_value": bl_ctns,
+                        "similarity": round(avg_similarity, 3),
+                        "note": f"Using last product (Item {last_product.get('Item Number', '?')})"
+                    })
+                elif avg_similarity > 0.1:
+                    comparison_result["discrepancies"].append({
+                        "field": f"CTNS (last item) / packed_in / number_of_cartons",
+                        "formd_value": formd_ctns,
+                        "invoice_value": invoice_ctns,
+                        "bl_value": bl_ctns,
+                        "similarity": round(avg_similarity, 3),
+                        "note": f"Using last product (Item {last_product.get('Item Number', '?')})"
+                    })
+            
+            # Number of invoices comparison - first item from Form D (2-way)
+            first_product = formd_products[0]
+            formd_num_invoices = first_product.get("Number of invoices", "")
+            invoice_number = invoice_data.get("number", "")
+            
+            if formd_num_invoices and invoice_number:
+                total_comparisons += 1
+                is_match, similarity = self.fuzzy_match_number(formd_num_invoices, invoice_number)
+                
+                if is_match:
+                    matches += 1
+                    comparison_result["matching_fields"].append({
+                        "field": "Number of invoices (first item) / number",
+                        "formd_value": formd_num_invoices,
+                        "invoice_value": invoice_number,
+                        "similarity": round(similarity, 3),
+                        "note": f"Using first product (Item {first_product.get('Item Number', '?')})"
+                    })
+                elif similarity > 0.3:
+                    comparison_result["discrepancies"].append({
+                        "field": "Number of invoices (first item) / number",
+                        "formd_value": formd_num_invoices,
+                        "invoice_value": invoice_number,
+                        "similarity": round(similarity, 3),
+                        "note": f"Using first product (Item {first_product.get('Item Number', '?')})"
+                    })
+            
+            # Date of invoices comparison - first item from Form D (2-way)
+            formd_date = first_product.get("Date of invoices", "")
+            invoice_date = invoice_data.get("invoice_date", "")
+            
+            if formd_date and invoice_date:
+                total_comparisons += 1
+                is_match, similarity = self.fuzzy_match(formd_date, invoice_date)
+                
+                if is_match:
+                    matches += 1
+                    comparison_result["matching_fields"].append({
+                        "field": "Date of invoices (first item) / invoice_date",
+                        "formd_value": formd_date,
+                        "invoice_value": invoice_date,
+                        "similarity": round(similarity, 3),
+                        "note": f"Using first product (Item {first_product.get('Item Number', '?')})"
+                    })
+                elif similarity > 0.3:
+                    comparison_result["discrepancies"].append({
+                        "field": "Date of invoices (first item) / invoice_date",
+                        "formd_value": formd_date,
+                        "invoice_value": invoice_date,
+                        "similarity": round(similarity, 3),
+                        "note": f"Using first product (Item {first_product.get('Item Number', '?')})"
+                    })
         
-        if formd_total_weight and invoice_total_weight:
-            weight_match, weight_sim = self.fuzzy_match_weight(formd_total_weight, invoice_total_weight)
-            if weight_match:
+        # Shipment number comparison (2-way: Invoice vs BL) - common for both scenarios
+        invoice_shipment = invoice_data.get("shipment_number", "")
+        bl_shipment = bl_data.get("shipment_number", "")
+        
+        if invoice_shipment and bl_shipment:
+            total_comparisons += 1
+            is_match, similarity = self.fuzzy_match(invoice_shipment, bl_shipment)
+            
+            if is_match:
                 matches += 1
                 comparison_result["matching_fields"].append({
-                    "field": "Total Gross Weight",
-                    "formd_value": formd_total_weight,
-                    "invoice_value": invoice_total_weight,
-                    "similarity": round(weight_sim, 3)
+                    "field": "shipment_number / shipment_number",
+                    "invoice_value": invoice_shipment,
+                    "bl_value": bl_shipment,
+                    "similarity": round(similarity, 3)
+                })
+            elif similarity > 0.3:
+                comparison_result["discrepancies"].append({
+                    "field": "shipment_number / shipment_number",
+                    "invoice_value": invoice_shipment,
+                    "bl_value": bl_shipment,
+                    "similarity": round(similarity, 3)
                 })
         
         comparison_result["total_fields_compared"] = total_comparisons
@@ -635,6 +855,9 @@ Important:
         if total_comparisons > 0:
             comparison_result["confidence_score"] = round(matches / total_comparisons, 3)
             comparison_result["documents_related"] = comparison_result["confidence_score"] > 0.5
+        
+        print(f"\nComparison complete: {matches}/{total_comparisons} fields matched")
+        print(f"Confidence score: {comparison_result['confidence_score']:.1%}")
         
         return comparison_result
 
