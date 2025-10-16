@@ -950,8 +950,11 @@ Important:
                             })
             
             best_matches.sort(key=lambda x: (x["hs_code_similarity"], x["description_similarity"]), reverse=True)
-            product_result["matches"] = best_matches
-            product_result["found_match"] = any(match["overall_match"] for match in best_matches)
+            
+            # *** MODIFICATION: Keep only top 3 matches ***
+            product_result["matches"] = best_matches[:3]
+            product_result["total_matches_found"] = len(best_matches)  # Track total before truncation
+            product_result["found_match"] = any(match["overall_match"] for match in best_matches[:3])
             
             if not product_result["found_match"]:
                 all_products_valid = False
