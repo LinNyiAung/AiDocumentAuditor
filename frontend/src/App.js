@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, FileText, CheckCircle, XCircle, AlertCircle, Loader2, Download, ChevronDown, ChevronRight } from 'lucide-react';
+import { Upload, FileText, CheckCircle, XCircle, AlertCircle, Loader2, Download, ChevronDown, ChevronRight, Settings } from 'lucide-react';
 
 const DocumentProcessor = () => {
   const [formDFile, setFormDFile] = useState(null);
@@ -9,6 +9,12 @@ const DocumentProcessor = () => {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [expandedSections, setExpandedSections] = useState({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  
+  // Advanced settings
+  const [formDPages, setFormDPages] = useState('0');
+  const [invoicePage, setInvoicePage] = useState('2');
+  const [blPages, setBlPages] = useState('0');
 
   const toggleSection = (sectionId) => {
     setExpandedSections(prev => ({
@@ -47,15 +53,19 @@ const DocumentProcessor = () => {
     formData.append('formd_pdf', formDFile);
     formData.append('invoice_pdf', invoiceFile);
     formData.append('bl_pdf', blFile);
+    formData.append('formd_pages', formDPages);
+    formData.append('invoice_page', invoicePage);
+    formData.append('bl_pages', blPages);
 
     try {
-      const response = await fetch('http://localhost:8000/process-documents-simple', {
+      const response = await fetch('http://localhost:8000/process-documents', {
         method: 'POST',
         body: formData,
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
       }
 
       const data = await response.json();
@@ -114,17 +124,64 @@ const DocumentProcessor = () => {
     }
   };
 
-  const ExtractedDataCard = ({ title, data }) => (
-    <div className="border rounded-lg p-4 bg-blue-50">
-      <h5 className="font-medium text-gray-900 mb-3">{title}</h5>
-      <div className="space-y-2">
-        {Object.entries(data).map(([key, value]) => (
-          <div key={key} className="text-sm">
-            <span className="font-medium text-gray-700">{key}: </span>
-            <span className="text-gray-600">{value || 'Not found'}</span>
-          </div>
-        ))}
+  const ProductValidationCard = ({ validation, index }) => (
+    <div className="border rounded-lg p-4 bg-gray-50">
+      <div className="flex justify-between items-start mb-3">
+        <div className="flex items-center">
+          {getStatusIcon(validation.found_match ? 'PASS' : 'FAIL')}
+          <h5 className="ml-2 font-medium text-gray-900">
+            Item {validation.item_number || index + 1}
+          </h5>
+        </div>
+        <span className={`text-xs px-2 py-1 rounded ${validation.found_match ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+          {validation.found_match ? 'Valid' : 'Invalid'}
+        </span>
       </div>
+
+      <div className="space-y-2 mb-3">
+        <div>
+          <span className="text-xs font-medium text-gray-500">HS Code:</span>
+          <div className="text-sm font-mono bg-white p-2 rounded border mt-1">
+            {validation.formd_hs_code || 'Not found'}
+          </div>
+        </div>
+        <div>
+          <span className="text-xs font-medium text-gray-500">Description:</span>
+          <div className="text-sm bg-white p-2 rounded border mt-1">
+            {validation.formd_description || 'Not found'}
+          </div>
+        </div>
+      </div>
+
+      {validation.matches && validation.matches.length > 0 && (
+        <div className="space-y-2">
+          <span className="text-xs font-medium text-gray-500">
+            Top Matches ({validation.total_matches_found || validation.matches.length}):
+          </span>
+          {validation.matches.map((match, idx) => (
+            <div key={idx} className={`p-2 rounded border ${match.overall_match ? 'bg-green-50 border-green-200' : 'bg-white'}`}>
+              <div className="flex justify-between items-start mb-1">
+                <span className="text-xs font-medium">Match {idx + 1}</span>
+                <div className="flex gap-1">
+                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                    HS: {(match.hs_code_similarity * 100).toFixed(0)}%
+                  </span>
+                  <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
+                    Desc: {(match.description_similarity * 100).toFixed(0)}%
+                  </span>
+                </div>
+              </div>
+              <div className="text-xs text-gray-600 space-y-1">
+                <div><span className="font-medium">CSV HS:</span> {match.csv_hs_code}</div>
+                <div><span className="font-medium">CSV Desc:</span> {match.csv_form_d_description}</div>
+                {match.sap_code && match.sap_code !== 'Not found' && (
+                  <div><span className="font-medium">SAP:</span> {match.sap_code}</div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 
@@ -132,17 +189,15 @@ const DocumentProcessor = () => {
     <div className="border rounded-lg p-4 bg-gray-50">
       <div className="flex justify-between items-start mb-3">
         <h5 className="font-medium text-gray-900">{field.field}</h5>
-        <div className="flex flex-col items-end space-y-1">
-          <span className="text-xs text-blue-700 bg-blue-100 px-2 py-1 rounded">
-            Avg: {((field.avg_similarity || field.similarity) * 100).toFixed(1)}%
-          </span>
-        </div>
+        <span className="text-xs text-blue-700 bg-blue-100 px-2 py-1 rounded">
+          Avg: {((field.avg_similarity || field.similarity) * 100).toFixed(1)}%
+        </span>
       </div>
       
       <div className="space-y-3">
         {field.formd_value !== undefined && (
           <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Form D:</span>
+            <span className="text-xs font-medium text-gray-500 uppercase">Form D:</span>
             <div className="mt-1 p-2 bg-white rounded border text-sm">
               {field.formd_value || 'Not found'}
             </div>
@@ -151,7 +206,7 @@ const DocumentProcessor = () => {
         
         {field.invoice_value !== undefined && (
           <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Invoice:</span>
+            <span className="text-xs font-medium text-gray-500 uppercase">Invoice:</span>
             <div className="mt-1 p-2 bg-white rounded border text-sm">
               {field.invoice_value || 'Not found'}
             </div>
@@ -160,7 +215,7 @@ const DocumentProcessor = () => {
         
         {field.bl_value !== undefined && (
           <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">BL:</span>
+            <span className="text-xs font-medium text-gray-500 uppercase">BL:</span>
             <div className="mt-1 p-2 bg-white rounded border text-sm">
               {field.bl_value || 'Not found'}
             </div>
@@ -184,103 +239,9 @@ const DocumentProcessor = () => {
           </div>
         </div>
       )}
-    </div>
-  );
-
-  const ValidationMatchCard = ({ match, type }) => (
-    <div className="border rounded-lg p-4 bg-gray-50">
-      {type === 'product' ? (
-        <div className="space-y-3">
-          <div className="flex justify-between items-start">
-            <h5 className="font-medium text-gray-900">Product Match</h5>
-            <div className="flex space-x-2">
-              <span className="text-xs text-blue-700 bg-blue-100 px-2 py-1 rounded">
-                HS: {(match.hs_code_similarity * 100).toFixed(1)}%
-              </span>
-              <span className="text-xs text-green-700 bg-green-100 px-2 py-1 rounded">
-                Desc: {(match.description_similarity * 100).toFixed(1)}%
-              </span>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Form D HS Code:</span>
-              <div className="mt-1 p-2 bg-white rounded border text-sm font-mono">
-                {match.formd_hs_code || 'Not found'}
-              </div>
-            </div>
-            
-            <div>
-              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">CSV HS Code:</span>
-              <div className="mt-1 p-2 bg-white rounded border text-sm font-mono">
-                {match.csv_hs_code || 'Not found'}
-              </div>
-            </div>
-          </div>
-          
-          <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Form D Description:</span>
-            <div className="mt-1 p-2 bg-white rounded border text-sm">
-              {match.formd_description || 'Not found'}
-            </div>
-          </div>
-          
-          <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">CSV Form D Description:</span>
-            <div className="mt-1 p-2 bg-white rounded border text-sm">
-              {match.csv_form_d_description || 'Not found'}
-            </div>
-          </div>
-          
-          {match.match_reason && (
-            <div className="text-xs text-gray-600 italic">
-              Match reason: {match.match_reason}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <div className="flex justify-between items-start">
-            <h5 className="font-medium text-gray-900">Company Match</h5>
-            <div className="flex space-x-2">
-              <span className="text-xs text-blue-700 bg-blue-100 px-2 py-1 rounded">
-                Name: {(match.company_name_similarity * 100).toFixed(1)}%
-              </span>
-              <span className="text-xs text-green-700 bg-green-100 px-2 py-1 rounded">
-                Address: {match.address_match ? 'Match' : 'No Match'}
-              </span>
-            </div>
-          </div>
-          
-          <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Form D Consignee Name:</span>
-            <div className="mt-1 p-2 bg-white rounded border text-sm">
-              {match.formd_consignee_name || 'Not found'}
-            </div>
-          </div>
-          
-          <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">CSV Company Name:</span>
-            <div className="mt-1 p-2 bg-white rounded border text-sm">
-              {match.csv_company_name || 'Not found'}
-            </div>
-          </div>
-          
-          <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Combined Form D Info:</span>
-            <div className="mt-1 p-2 bg-white rounded border text-sm">
-              {match.combined_formd_info || 'Not found'}
-            </div>
-          </div>
-          
-          <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">CSV Address:</span>
-            <div className="mt-1 p-2 bg-white rounded border text-sm">
-              {match.csv_address || 'Not found'}
-            </div>
-          </div>
-        </div>
+      
+      {field.note && (
+        <div className="mt-2 text-xs text-gray-500 italic">{field.note}</div>
       )}
     </div>
   );
@@ -291,6 +252,7 @@ const DocumentProcessor = () => {
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-900 mb-2">Document Processor</h1>
           <p className="text-lg text-gray-600">Upload Form D, Invoice, and BL PDFs for AI-powered analysis</p>
+          <p className="text-sm text-gray-500 mt-1">Supports multiple pages and products</p>
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
@@ -380,6 +342,63 @@ const DocumentProcessor = () => {
                   </div>
                 </div>
 
+                <div className="border-t pt-4">
+                  <button
+                    onClick={() => setShowAdvanced(!showAdvanced)}
+                    className="flex items-center text-sm text-gray-600 hover:text-gray-900 mb-3"
+                  >
+                    <Settings className="w-4 h-4 mr-2" />
+                    Advanced Settings
+                    {showAdvanced ? <ChevronDown className="w-4 h-4 ml-1" /> : <ChevronRight className="w-4 h-4 ml-1" />}
+                  </button>
+
+                  {showAdvanced && (
+                    <div className="space-y-3 bg-gray-50 p-3 rounded-lg">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Form D Pages (comma-separated)
+                        </label>
+                        <input
+                          type="text"
+                          value={formDPages}
+                          onChange={(e) => setFormDPages(e.target.value)}
+                          placeholder="e.g., 0,1,2"
+                          className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Default: 0</p>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Invoice Page
+                        </label>
+                        <input
+                          type="number"
+                          value={invoicePage}
+                          onChange={(e) => setInvoicePage(e.target.value)}
+                          min="0"
+                          className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Default: 2</p>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          BL Pages (comma-separated)
+                        </label>
+                        <input
+                          type="text"
+                          value={blPages}
+                          onChange={(e) => setBlPages(e.target.value)}
+                          placeholder="e.g., 0,1"
+                          className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Default: 0</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <button
                   onClick={handleSubmit}
                   disabled={!formDFile || !invoiceFile || !blFile || isProcessing}
@@ -420,35 +439,52 @@ const DocumentProcessor = () => {
                   </div>
 
                   {result.data?.overall_assessment && (
-                    <div className="grid md:grid-cols-2 gap-4">
-                      <div className="space-y-3">
-                        <div className="flex items-center">
-                          {getStatusIcon(result.data.overall_assessment.documents_match ? 'RELATED' : 'NOT RELATED')}
-                          <span className="ml-2 font-medium">
-                            Documents: {result.data.overall_assessment.documents_match ? 'RELATED' : 'NOT RELATED'}
-                          </span>
+                    <div className="space-y-4">
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div className="space-y-3">
+                          <div className="flex items-center">
+                            {getStatusIcon(result.data.overall_assessment.documents_match ? 'RELATED' : 'NOT RELATED')}
+                            <span className="ml-2 font-medium">
+                              Documents: {result.data.overall_assessment.documents_match ? 'RELATED' : 'NOT RELATED'}
+                            </span>
+                          </div>
+                          
+                          <div className={`px-3 py-1 rounded-full text-sm font-medium inline-flex items-center ${getStatusColor(result.data.overall_assessment.validation_status)}`}>
+                            {getStatusIcon(result.data.overall_assessment.validation_status)}
+                            <span className="ml-2">Validation: {result.data.overall_assessment.validation_status}</span>
+                          </div>
                         </div>
                         
-                        <div className={`px-3 py-1 rounded-full text-sm font-medium inline-flex items-center ${getStatusColor(result.data.overall_assessment.validation_status)}`}>
-                          {getStatusIcon(result.data.overall_assessment.validation_status)}
-                          <span className="ml-2">Validation: {result.data.overall_assessment.validation_status}</span>
+                        <div className="space-y-2">
+                          <div className="text-sm text-gray-600">
+                            Confidence: <span className="font-semibold text-gray-900">{result.data.overall_assessment.confidence_level}</span>
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            Match Score: <span className="font-semibold text-gray-900">{(result.data.comparison?.confidence_score * 100 || 0).toFixed(1)}%</span>
+                          </div>
+                          {result.data?.formd_data?.total_products && (
+                            <div className="text-sm text-gray-600">
+                              Total Products: <span className="font-semibold text-gray-900">{result.data.formd_data.total_products}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
-                      
-                      <div className="space-y-2">
-                        <div className="text-sm text-gray-600">
-                          Confidence: <span className="font-semibold text-gray-900">{result.data.overall_assessment.confidence_level}</span>
-                        </div>
-                        <div className="text-sm text-gray-600">
-                          Match Score: <span className="font-semibold text-gray-900">{(result.data.comparison?.confidence_score * 100 || 0).toFixed(1)}%</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
 
-                  {result.data?.overall_assessment?.summary && (
-                    <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-                      <p className="text-sm text-gray-700">{result.data.overall_assessment.summary}</p>
+                      {result.metadata && (
+                        <div className="text-xs text-gray-500 bg-gray-50 p-3 rounded-lg">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>Form D Pages: {result.metadata.formd_pages?.join(', ') || '0'}</div>
+                            <div>Invoice Page: {result.metadata.invoice_page}</div>
+                            <div>BL Pages: {result.metadata.bl_pages?.join(', ') || '0'}</div>
+                          </div>
+                        </div>
+                      )}
+
+                      {result.data.overall_assessment.summary && (
+                        <div className="p-3 bg-gray-50 rounded-lg">
+                          <p className="text-sm text-gray-700">{result.data.overall_assessment.summary}</p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -483,27 +519,21 @@ const DocumentProcessor = () => {
                               {getStatusIcon(result.data.validation.product_validation.found_matches ? 'PASS' : 'FAIL')}
                               <h4 className="ml-2 font-medium">Product Validation</h4>
                             </div>
-                            {/* <span className="text-xs text-gray-500">
-                              {result.data.validation.product_validation.matches?.length || 0} matches found
-                            </span> */}
+                            <span className="text-xs text-gray-500">
+                              {result.data.validation.product_validation.valid_products || 0} / {result.data.validation.product_validation.total_products || 0} valid
+                            </span>
                           </div>
                           
                           {expandedSections.validation && (
                             <div className="mt-4 space-y-4">
-                              {result.data.validation.product_validation.matches?.length > 0 ? (
-                                result.data.validation.product_validation.matches.slice(0, 3).map((match, idx) => (
-                                  <ValidationMatchCard key={idx} match={match} type="product" />
+                              {result.data.validation.product_validation.product_validations?.length > 0 ? (
+                                result.data.validation.product_validation.product_validations.map((validation, idx) => (
+                                  <ProductValidationCard key={idx} validation={validation} index={idx} />
                                 ))
                               ) : (
-                                result.data?.formd_data && (
-                                  <ExtractedDataCard 
-                                    title="Extracted Form D Product Information (No Matches Found)"
-                                    data={{
-                                      'HS CODE': result.data.formd_data['HS CODE'],
-                                      'Product Description': result.data.formd_data['Product Description']
-                                    }}
-                                  />
-                                )
+                                <div className="text-sm text-gray-500 text-center py-4">
+                                  No product validation data available
+                                </div>
                               )}
                             </div>
                           )}
@@ -522,24 +552,35 @@ const DocumentProcessor = () => {
                             </span>
                           </div>
                           
-                          {expandedSections.validation && (
-                            <div className="mt-4 space-y-4">
-                              {result.data.validation.company_validation.matches?.length > 0 ? (
-                                result.data.validation.company_validation.matches.slice(0, 3).map((match, idx) => (
-                                  <ValidationMatchCard key={idx} match={match} type="company" />
-                                ))
-                              ) : (
-                                result.data?.formd_data && (
-                                  <ExtractedDataCard 
-                                    title="Extracted Form D Company Information (No Matches Found)"
-                                    data={{
-                                      "Consignee's business name": result.data.formd_data["Consignee's business name"],
-                                      "Consignee's address": result.data.formd_data["Consignee's address"],
-                                      "Consignee's country": result.data.formd_data["Consignee's country"]
-                                    }}
-                                  />
-                                )
-                              )}
+                          {expandedSections.validation && result.data.validation.company_validation.matches?.length > 0 && (
+                            <div className="mt-4 space-y-3">
+                              {result.data.validation.company_validation.matches.slice(0, 3).map((match, idx) => (
+                                <div key={idx} className={`p-3 rounded border ${match.overall_match ? 'bg-green-50 border-green-200' : 'bg-white'}`}>
+                                  <div className="flex justify-between items-start mb-2">
+                                    <span className="text-sm font-medium">Match {idx + 1}</span>
+                                    <div className="flex gap-1">
+                                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                                        Name: {(match.company_name_similarity * 100).toFixed(0)}%
+                                      </span>
+                                      {match.address_match && (
+                                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
+                                          Address ✓
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="space-y-2 text-xs">
+                                    <div>
+                                      <span className="font-medium text-gray-600">Form D:</span>
+                                      <div className="text-gray-700 mt-1">{match.formd_consignee_name}</div>
+                                    </div>
+                                    <div>
+                                      <span className="font-medium text-gray-600">CSV:</span>
+                                      <div className="text-gray-700 mt-1">{match.csv_company_name}</div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
@@ -557,44 +598,9 @@ const DocumentProcessor = () => {
                             </span>
                           </div>
                           
-                          {expandedSections.validation && (
-                            <div className="mt-4 space-y-3">
-                              {result.data.validation.food_supplement_validation.match_details?.matched_term && (
-                                <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                                  <div className="text-xs font-medium text-green-700 mb-1">Matched Term:</div>
-                                  <div className="text-sm text-green-900 font-mono">
-                                    {result.data.validation.food_supplement_validation.match_details.matched_term}
-                                  </div>
-                                </div>
-                              )}
-                              
-                              {result.data.validation.food_supplement_validation.description_of_goods && (
-                                <div>
-                                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">BL Description of Goods:</span>
-                                  <div className="mt-1 p-2 bg-white rounded border text-sm">
-                                    {result.data.validation.food_supplement_validation.description_of_goods}
-                                  </div>
-                                </div>
-                              )}
-                              
-                              {result.data.validation.food_supplement_validation.normalized_description && (
-                                <div>
-                                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Normalized (for matching):</span>
-                                  <div className="mt-1 p-2 bg-gray-50 rounded border text-xs font-mono text-gray-600">
-                                    {result.data.validation.food_supplement_validation.normalized_description.substring(0, 200)}
-                                    {result.data.validation.food_supplement_validation.normalized_description.length > 200 && '...'}
-                                  </div>
-                                </div>
-                              )}
-                              
-                              {result.data.validation.food_supplement_validation.error && (
-                                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                                  <div className="text-xs font-medium text-yellow-700 mb-1">Note:</div>
-                                  <div className="text-sm text-yellow-900">
-                                    {result.data.validation.food_supplement_validation.error}
-                                  </div>
-                                </div>
-                              )}
+                          {expandedSections.validation && result.data.validation.food_supplement_validation.match_details?.matched_term && (
+                            <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded text-xs">
+                              <span className="font-medium">Matched:</span> {result.data.validation.food_supplement_validation.match_details.matched_term}
                             </div>
                           )}
                         </div>
@@ -636,7 +642,7 @@ const DocumentProcessor = () => {
                           <div className="space-y-3">
                             {field.formd_value !== undefined && (
                               <div>
-                                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Form D:</span>
+                                <span className="text-xs font-medium text-gray-500 uppercase">Form D:</span>
                                 <div className="mt-1 p-2 bg-white rounded border text-sm">
                                   {field.formd_value || 'Not found'}
                                 </div>
@@ -645,7 +651,7 @@ const DocumentProcessor = () => {
                             
                             {field.invoice_value !== undefined && (
                               <div>
-                                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Invoice:</span>
+                                <span className="text-xs font-medium text-gray-500 uppercase">Invoice:</span>
                                 <div className="mt-1 p-2 bg-white rounded border text-sm">
                                   {field.invoice_value || 'Not found'}
                                 </div>
@@ -654,7 +660,7 @@ const DocumentProcessor = () => {
                             
                             {field.bl_value !== undefined && (
                               <div>
-                                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">BL:</span>
+                                <span className="text-xs font-medium text-gray-500 uppercase">BL:</span>
                                 <div className="mt-1 p-2 bg-white rounded border text-sm">
                                   {field.bl_value || 'Not found'}
                                 </div>
@@ -662,41 +668,14 @@ const DocumentProcessor = () => {
                             )}
                           </div>
                           
-                          {field.formd_invoice_sim !== undefined && (
-                            <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                              <div className="text-center p-1 bg-white rounded">
-                                <div className="text-gray-500">Form D ↔ Invoice</div>
-                                <div className="font-medium">{(field.formd_invoice_sim * 100).toFixed(0)}%</div>
-                              </div>
-                              <div className="text-center p-1 bg-white rounded">
-                                <div className="text-gray-500">Form D ↔ BL</div>
-                                <div className="font-medium">{(field.formd_bl_sim * 100).toFixed(0)}%</div>
-                              </div>
-                              <div className="text-center p-1 bg-white rounded">
-                                <div className="text-gray-500">Invoice ↔ BL</div>
-                                <div className="font-medium">{(field.invoice_bl_sim * 100).toFixed(0)}%</div>
-                              </div>
-                            </div>
+                          {field.note && (
+                            <div className="mt-2 text-xs text-gray-500 italic">{field.note}</div>
                           )}
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
-
-                {/* {result.data?.overall_assessment?.recommendations?.length > 0 && (
-                  <div className="bg-white rounded-xl shadow-lg p-6">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Recommendations</h3>
-                    <ul className="space-y-2">
-                      {result.data.overall_assessment.recommendations.map((rec, idx) => (
-                        <li key={idx} className="flex items-start">
-                          <AlertCircle className="w-4 h-4 mt-1 mr-2 text-amber-500 flex-shrink-0" />
-                          <span className="text-sm text-gray-700">{rec}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )} */}
 
                 <div className="bg-white rounded-xl shadow-lg p-6">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">Extracted Document Data</h3>
@@ -710,7 +689,14 @@ const DocumentProcessor = () => {
                         >
                           <div className="flex items-center">
                             <FileText className="w-5 h-5 text-blue-600 mr-2" />
-                            <h4 className="font-medium text-gray-900">Form D Data</h4>
+                            <h4 className="font-medium text-gray-900">
+                              Form D Data 
+                              {result.data.formd_data.pages_processed && (
+                                <span className="text-sm text-gray-500 ml-2">
+                                  (Pages: {result.data.formd_data.pages_processed.join(', ')})
+                                </span>
+                              )}
+                            </h4>
                           </div>
                           {expandedSections.formd_data ? (
                             <ChevronDown className="w-5 h-5 text-gray-500" />
@@ -722,16 +708,49 @@ const DocumentProcessor = () => {
                         {expandedSections.formd_data && (
                           <div className="p-4 bg-white border-t">
                             <div className="grid md:grid-cols-2 gap-4">
-                              {Object.entries(result.data.formd_data).map(([key, value]) => (
-                                <div key={key} className="space-y-1">
-                                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                                    {key}:
-                                  </span>
-                                  <div className="p-2 bg-gray-50 rounded border text-sm text-gray-700">
-                                    {typeof value === 'string' ? value : JSON.stringify(value)}
+                              {Object.entries(result.data.formd_data).map(([key, value]) => {
+                                if (key === 'products' && Array.isArray(value)) {
+                                  return (
+                                    <div key={key} className="col-span-2 space-y-1">
+                                      <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                                        Products ({value.length}):
+                                      </span>
+                                      <div className="space-y-3">
+                                        {value.map((product, idx) => (
+                                          <div key={idx} className="p-3 bg-blue-50 rounded border border-blue-200">
+                                            <div className="font-medium text-sm text-blue-900 mb-2">
+                                              Product {idx + 1} (Item {product['Item Number'] || '?'})
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                              {Object.entries(product).map(([pKey, pValue]) => (
+                                                <div key={pKey} className="text-xs">
+                                                  <span className="font-medium text-gray-600">{pKey}:</span>
+                                                  <div className="text-gray-700 bg-white p-1 rounded mt-1">
+                                                    {typeof pValue === 'string' ? pValue : JSON.stringify(pValue)}
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                if (key === 'pages_processed' || key === 'total_products') {
+                                  return null;
+                                }
+                                return (
+                                  <div key={key} className="space-y-1">
+                                    <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                                      {key}:
+                                    </span>
+                                    <div className="p-2 bg-gray-50 rounded border text-sm text-gray-700">
+                                      {typeof value === 'string' ? value : JSON.stringify(value)}
+                                    </div>
                                   </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         )}
@@ -758,16 +777,46 @@ const DocumentProcessor = () => {
                         {expandedSections.invoice_data && (
                           <div className="p-4 bg-white border-t">
                             <div className="grid md:grid-cols-2 gap-4">
-                              {Object.entries(result.data.invoice_data).map(([key, value]) => (
-                                <div key={key} className="space-y-1">
-                                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                                    {key}:
-                                  </span>
-                                  <div className="p-2 bg-gray-50 rounded border text-sm text-gray-700">
-                                    {typeof value === 'string' ? value : JSON.stringify(value)}
+                              {Object.entries(result.data.invoice_data).map(([key, value]) => {
+                                if (key === 'products' && Array.isArray(value)) {
+                                  return (
+                                    <div key={key} className="col-span-2 space-y-1">
+                                      <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                                        Products ({value.length}):
+                                      </span>
+                                      <div className="space-y-3">
+                                        {value.map((product, idx) => (
+                                          <div key={idx} className="p-3 bg-green-50 rounded border border-green-200">
+                                            <div className="font-medium text-sm text-green-900 mb-2">
+                                              Product {idx + 1}
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                              {Object.entries(product).map(([pKey, pValue]) => (
+                                                <div key={pKey} className="text-xs">
+                                                  <span className="font-medium text-gray-600">{pKey}:</span>
+                                                  <div className="text-gray-700 bg-white p-1 rounded mt-1">
+                                                    {typeof pValue === 'string' ? pValue : JSON.stringify(pValue)}
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <div key={key} className="space-y-1">
+                                    <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                                      {key}:
+                                    </span>
+                                    <div className="p-2 bg-gray-50 rounded border text-sm text-gray-700">
+                                      {typeof value === 'string' ? value : JSON.stringify(value)}
+                                    </div>
                                   </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         )}
@@ -782,7 +831,14 @@ const DocumentProcessor = () => {
                         >
                           <div className="flex items-center">
                             <FileText className="w-5 h-5 text-purple-600 mr-2" />
-                            <h4 className="font-medium text-gray-900">BL (Bill of Lading) Data</h4>
+                            <h4 className="font-medium text-gray-900">
+                              BL Data
+                              {result.data.bl_data.pages_processed && (
+                                <span className="text-sm text-gray-500 ml-2">
+                                  (Pages: {result.data.bl_data.pages_processed.join(', ')})
+                                </span>
+                              )}
+                            </h4>
                           </div>
                           {expandedSections.bl_data ? (
                             <ChevronDown className="w-5 h-5 text-gray-500" />
@@ -794,16 +850,49 @@ const DocumentProcessor = () => {
                         {expandedSections.bl_data && (
                           <div className="p-4 bg-white border-t">
                             <div className="grid md:grid-cols-2 gap-4">
-                              {Object.entries(result.data.bl_data).map(([key, value]) => (
-                                <div key={key} className="space-y-1">
-                                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                                    {key}:
-                                  </span>
-                                  <div className="p-2 bg-gray-50 rounded border text-sm text-gray-700">
-                                    {typeof value === 'string' ? value : JSON.stringify(value)}
+                              {Object.entries(result.data.bl_data).map(([key, value]) => {
+                                if (key === 'containers' && Array.isArray(value)) {
+                                  return (
+                                    <div key={key} className="col-span-2 space-y-1">
+                                      <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                                        Containers ({value.length}):
+                                      </span>
+                                      <div className="space-y-3">
+                                        {value.map((container, idx) => (
+                                          <div key={idx} className="p-3 bg-purple-50 rounded border border-purple-200">
+                                            <div className="font-medium text-sm text-purple-900 mb-2">
+                                              Container {idx + 1}
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                              {Object.entries(container).map(([cKey, cValue]) => (
+                                                <div key={cKey} className="text-xs">
+                                                  <span className="font-medium text-gray-600">{cKey}:</span>
+                                                  <div className="text-gray-700 bg-white p-1 rounded mt-1">
+                                                    {typeof cValue === 'string' ? cValue : JSON.stringify(cValue)}
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                if (key === 'pages_processed' || key === 'total_containers') {
+                                  return null;
+                                }
+                                return (
+                                  <div key={key} className="space-y-1">
+                                    <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                                      {key}:
+                                    </span>
+                                    <div className="p-2 bg-gray-50 rounded border text-sm text-gray-700">
+                                      {typeof value === 'string' ? value : JSON.stringify(value)}
+                                    </div>
                                   </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         )}
@@ -817,6 +906,7 @@ const DocumentProcessor = () => {
                 <FileText className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-gray-900 mb-2">No Results Yet</h3>
                 <p className="text-gray-600">Upload all three PDF files (Form D, Invoice, and BL) and click "Process Documents" to see the analysis results.</p>
+                <p className="text-sm text-gray-500 mt-2">Use Advanced Settings to process multiple pages</p>
               </div>
             )}
           </div>
@@ -826,4 +916,4 @@ const DocumentProcessor = () => {
   );
 };
 
-export default DocumentProcessor
+export default DocumentProcessor;

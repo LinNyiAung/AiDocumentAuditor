@@ -5,7 +5,7 @@ import tempfile
 import os
 import json
 import asyncio
-from typing import Optional
+from typing import Optional, List
 import logging
 from pathlib import Path
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Document Processing API",
     description="API for processing Form D, Invoice, and BL (Bill of Lading) PDF documents using AI",
-    version="2.0.0"
+    version="3.0.0"
 )
 
 # Add CORS middleware
@@ -55,7 +55,7 @@ async def root():
     return {
         "message": "Document Processing API is running",
         "status": "healthy",
-        "version": "2.0.0"
+        "version": "3.0.0"
     }
 
 @app.get("/health")
@@ -64,32 +64,42 @@ async def health_check():
     return {
         "status": "healthy",
         "processor_initialized": processor is not None,
-        "api_version": "2.0.0"
+        "api_version": "3.0.0"
     }
+
+def parse_page_list(page_string: str) -> List[int]:
+    """Parse comma-separated page string into list of integers"""
+    if not page_string or page_string.strip() == "":
+        return None
+    try:
+        pages = [int(p.strip()) for p in page_string.split(',')]
+        return pages
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid page format: {page_string}")
 
 @app.post("/process-documents")
 async def process_documents(
     formd_pdf: UploadFile = File(..., description="Form D PDF file"),
     invoice_pdf: UploadFile = File(..., description="Invoice PDF file"),
     bl_pdf: UploadFile = File(..., description="BL (Bill of Lading) PDF file"),
-    formd_page: int = Form(0, description="Page number for Form D (0-indexed)"),
+    formd_pages: str = Form("0", description="Comma-separated page numbers for Form D (0-indexed), e.g., '0,1,2'"),
     invoice_page: int = Form(2, description="Page number for Invoice (0-indexed)"),
-    bl_page: int = Form(0, description="Page number for BL (0-indexed)"),
+    bl_pages: str = Form("0", description="Comma-separated page numbers for BL (0-indexed), e.g., '0,1'"),
     rotate_invoice: bool = Form(True, description="Whether to rotate invoice image 90° clockwise"),
-    crop_bottom_percent: float = Form(30.0, description="Percentage of bottom to crop from invoice and BL images"),
+    crop_bottom_percent: float = Form(18.0, description="Percentage of bottom to crop from invoice and BL images"),
     api_key: Optional[str] = Form(None, description="Optional OpenAI API key override")
 ):
     """
-    Process Form D, Invoice, and BL PDF documents
+    Process Form D, Invoice, and BL PDF documents with support for multiple pages
     
     - **formd_pdf**: Upload the Form D PDF file
     - **invoice_pdf**: Upload the Invoice PDF file
     - **bl_pdf**: Upload the BL (Bill of Lading) PDF file
-    - **formd_page**: Page number to process from Form D (default: 0)
+    - **formd_pages**: Comma-separated page numbers for Form D (e.g., "0,1,2")
     - **invoice_page**: Page number to process from Invoice (default: 2)
-    - **bl_page**: Page number to process from BL (default: 0)
+    - **bl_pages**: Comma-separated page numbers for BL (e.g., "0,1")
     - **rotate_invoice**: Rotate invoice image 90° clockwise (default: true)
-    - **crop_bottom_percent**: Percentage of bottom to crop from invoice and BL (default: 30%)
+    - **crop_bottom_percent**: Percentage of bottom to crop (default: 18%)
     - **api_key**: Optional OpenAI API key override
     """
     
@@ -106,15 +116,16 @@ async def process_documents(
     if not bl_pdf.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="BL file must be a PDF")
     
-    # Validate parameters
-    if formd_page < 0:
-        raise HTTPException(status_code=400, detail="Form D page number must be >= 0")
+    # Parse page lists
+    try:
+        formd_page_list = parse_page_list(formd_pages)
+        bl_page_list = parse_page_list(bl_pages)
+    except HTTPException as e:
+        raise e
     
+    # Validate parameters
     if invoice_page < 0:
         raise HTTPException(status_code=400, detail="Invoice page number must be >= 0")
-    
-    if bl_page < 0:
-        raise HTTPException(status_code=400, detail="BL page number must be >= 0")
     
     if crop_bottom_percent < 0 or crop_bottom_percent > 50:
         raise HTTPException(status_code=400, detail="Crop bottom percentage must be between 0 and 50")
@@ -148,7 +159,7 @@ async def process_documents(
             f.write(content)
         
         logger.info(f"Processing documents: {formd_pdf.filename}, {invoice_pdf.filename}, and {bl_pdf.filename}")
-        logger.info(f"Parameters: formd_page={formd_page}, invoice_page={invoice_page}, bl_page={bl_page}, "
+        logger.info(f"Parameters: formd_pages={formd_page_list}, invoice_page={invoice_page}, bl_pages={bl_page_list}, "
                    f"rotate_invoice={rotate_invoice}, crop_bottom_percent={crop_bottom_percent}")
         
         # Create processor instance with custom API key if provided
@@ -161,9 +172,9 @@ async def process_documents(
             formd_pdf_path=formd_temp_path,
             invoice_pdf_path=invoice_temp_path,
             bl_pdf_path=bl_temp_path,
-            formd_page=formd_page,
+            formd_pages=formd_page_list,
             invoice_page=invoice_page,
-            bl_page=bl_page,
+            bl_pages=bl_page_list,
             rotate_invoice=rotate_invoice,
             crop_bottom_percent=crop_bottom_percent
         )
@@ -183,9 +194,9 @@ async def process_documents(
                 "formd_filename": formd_pdf.filename,
                 "invoice_filename": invoice_pdf.filename,
                 "bl_filename": bl_pdf.filename,
-                "formd_page": formd_page,
+                "formd_pages": formd_page_list,
                 "invoice_page": invoice_page,
-                "bl_page": bl_page,
+                "bl_pages": bl_page_list,
                 "rotate_invoice": rotate_invoice,
                 "crop_bottom_percent": crop_bottom_percent
             }
@@ -229,11 +240,11 @@ async def process_documents_simple(
         formd_pdf=formd_pdf,
         invoice_pdf=invoice_pdf,
         bl_pdf=bl_pdf,
-        formd_page=0,
+        formd_pages="0",
         invoice_page=2,
-        bl_page=0,
+        bl_pages="0",
         rotate_invoice=True,
-        crop_bottom_percent=30.0,
+        crop_bottom_percent=18.0,
         api_key=None
     )
 
@@ -242,12 +253,12 @@ async def api_info():
     """Get information about the API and available endpoints"""
     return {
         "title": "Document Processing API",
-        "version": "2.0.0",
-        "description": "API for processing Form D, Invoice, and BL (Bill of Lading) PDF documents using AI",
+        "version": "3.0.0",
+        "description": "API for processing Form D, Invoice, and BL (Bill of Lading) PDF documents using AI with multi-page support",
         "endpoints": {
             "/": "Root endpoint - health check",
             "/health": "Detailed health check",
-            "/process-documents": "Main endpoint for document processing with full parameters",
+            "/process-documents": "Main endpoint for document processing with full parameters (supports multiple pages)",
             "/process-documents-simple": "Simplified endpoint with default parameters",
             "/api-info": "This endpoint - API information",
             "/docs": "Interactive API documentation (Swagger UI)",
@@ -256,6 +267,8 @@ async def api_info():
         "supported_formats": ["PDF"],
         "features": [
             "AI-powered text extraction from PDF documents",
+            "Multi-page support for Form D and BL documents",
+            "Multi-product handling in Form D",
             "Three-way document comparison (Form D, Invoice, and BL)",
             "Document relationship analysis with confidence scoring",
             "Validation against product and company databases",
