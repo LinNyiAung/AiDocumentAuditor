@@ -192,7 +192,7 @@ class DocumentProcessor:
     "products": [
         {
         "Item Number": "...",
-        "HS CODE": "...",
+        "HS CODE": "complete float number HS CODE",
         "Product Description": "...",
         "CTNS": "...",
         "Gross weight": "...",
@@ -214,7 +214,7 @@ class DocumentProcessor:
     "products": [
         {
         "Item Number": "...",
-        "HS CODE": "...",
+        "HS CODE": "float number HS CODE",
         "Product Description": "...",
         "CTNS": "...",
         "Gross weight": "...",
