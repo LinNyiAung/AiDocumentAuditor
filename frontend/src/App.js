@@ -124,66 +124,150 @@ const DocumentProcessor = () => {
     }
   };
 
-  const ProductValidationCard = ({ validation, index }) => (
-    <div className="border rounded-lg p-4 bg-gray-50">
-      <div className="flex justify-between items-start mb-3">
-        <div className="flex items-center">
-          {getStatusIcon(validation.found_match ? 'PASS' : 'FAIL')}
-          <h5 className="ml-2 font-medium text-gray-900">
-            Item {validation.item_number || index + 1}
-          </h5>
-        </div>
-        <span className={`text-xs px-2 py-1 rounded ${validation.found_match ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-          {validation.found_match ? 'Valid' : 'Invalid'}
-        </span>
-      </div>
+  
+  const highlightMatchingText = (formdDesc, csvDesc) => {
+    if (!formdDesc || !csvDesc) return formdDesc;
+    
+    // Normalize: remove spaces and convert to uppercase
+    const normalizeForComparison = (str) => {
+      return str.toUpperCase().replace(/\s+/g, '');
+    };
+    
+    const normalizedFormD = normalizeForComparison(formdDesc);
+    const normalizedCSV = normalizeForComparison(csvDesc);
+    
+    // Find where CSV description appears in Form D description
+    const matchIndex = normalizedFormD.indexOf(normalizedCSV);
+    
+    if (matchIndex !== -1) {
+      // Found exact match - map back to original positions
+      const startIdx = matchIndex;
+      const endIdx = startIdx + normalizedCSV.length;
+      
+      // Map normalized positions back to original string positions
+      let charCount = 0;
+      let startPos = 0;
+      let endPos = formdDesc.length;
+      let foundStart = false;
+      let foundEnd = false;
+      
+      for (let i = 0; i < formdDesc.length; i++) {
+        const char = formdDesc[i];
+        
+        // Count non-space characters
+        if (!/\s/.test(char)) {
+          if (charCount === startIdx && !foundStart) {
+            startPos = i;
+            foundStart = true;
+          }
+          if (charCount === endIdx - 1 && !foundEnd) {
+            // Find the end of the current word (including punctuation)
+            endPos = i + 1;
+            // Continue to the end of the word
+            while (endPos < formdDesc.length && !/\s/.test(formdDesc[endPos])) {
+              endPos++;
+            }
+            foundEnd = true;
+            break;
+          }
+          charCount++;
+        }
+      }
+      
+      if (foundStart && foundEnd) {
+        return (
+          <>
+            {formdDesc.substring(0, startPos)}
+            <mark className="bg-yellow-200 font-medium">{formdDesc.substring(startPos, endPos)}</mark>
+            {formdDesc.substring(endPos)}
+          </>
+        );
+      }
+    }
+    
+    // No exact match found - return original text without highlighting
+    return formdDesc;
+  };
 
-      <div className="space-y-2 mb-3">
-        <div>
-          <span className="text-xs font-medium text-gray-500">HS Code:</span>
-          <div className="text-sm font-mono bg-white p-2 rounded border mt-1">
-            {validation.formd_hs_code || 'Not found'}
+  const ProductValidationCard = ({ validation, index }) => {
+    // Get the best match (highest similarity) regardless of overall_match status
+    const bestMatch = validation.matches && validation.matches.length > 0 ? validation.matches[0] : null;
+    const hasCompleteMatch = bestMatch?.overall_match || false;
+    
+    return (
+      <div className="border rounded-lg p-4 bg-gray-50">
+        <div className="flex justify-between items-start mb-3">
+          <div className="flex items-center">
+            {getStatusIcon(validation.found_match ? 'PASS' : 'FAIL')}
+            <h5 className="ml-2 font-medium text-gray-900">
+              Item {validation.item_number || index + 1}
+            </h5>
           </div>
-        </div>
-        <div>
-          <span className="text-xs font-medium text-gray-500">Description:</span>
-          <div className="text-sm bg-white p-2 rounded border mt-1">
-            {validation.formd_description || 'Not found'}
-          </div>
-        </div>
-      </div>
-
-      {validation.matches && validation.matches.length > 0 && (
-        <div className="space-y-2">
-          <span className="text-xs font-medium text-gray-500">
-            Top Matches ({validation.total_matches_found || validation.matches.length}):
+          <span className={`text-xs px-2 py-1 rounded ${validation.found_match ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+            {validation.found_match ? 'Valid' : 'Invalid'}
           </span>
-          {validation.matches.map((match, idx) => (
-            <div key={idx} className={`p-2 rounded border ${match.overall_match ? 'bg-green-50 border-green-200' : 'bg-white'}`}>
+        </div>
+
+        <div className="space-y-2 mb-3">
+          <div>
+            <span className="text-xs font-medium text-gray-500">HS Code:</span>
+            <div className="text-sm font-mono bg-white p-2 rounded border mt-1">
+              {validation.formd_hs_code || 'Not found'}
+            </div>
+          </div>
+          <div>
+            <span className="text-xs font-medium text-gray-500">Description:</span>
+            <div className="text-sm bg-white p-2 rounded border mt-1">
+              {bestMatch ? (
+                highlightMatchingText(validation.formd_description, bestMatch.csv_form_d_description)
+              ) : (
+                validation.formd_description || 'Not found'
+              )}
+            </div>
+          </div>
+        </div>
+
+        {bestMatch ? (
+          <div className="space-y-2">
+            <span className="text-xs font-medium text-gray-500">
+              {hasCompleteMatch ? 'Matched Product:' : 'Most Similar Product:'}
+            </span>
+            <div className={`p-2 rounded border ${hasCompleteMatch ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
               <div className="flex justify-between items-start mb-1">
-                <span className="text-xs font-medium">Match {idx + 1}</span>
+                <span className={`text-xs font-medium ${hasCompleteMatch ? 'text-green-800' : 'text-yellow-800'}`}>
+                  {hasCompleteMatch ? 'Complete Match' : 'Partial Match'}
+                </span>
                 <div className="flex gap-1">
                   <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
-                    HS: {(match.hs_code_similarity * 100).toFixed(0)}%
+                    HS: {(bestMatch.hs_code_similarity * 100).toFixed(0)}%
                   </span>
                   <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
-                    Desc: {(match.description_similarity * 100).toFixed(0)}%
+                    Desc: {(bestMatch.description_similarity * 100).toFixed(0)}%
                   </span>
                 </div>
               </div>
               <div className="text-xs text-gray-600 space-y-1">
-                <div><span className="font-medium">CSV HS:</span> {match.csv_hs_code}</div>
-                <div><span className="font-medium">CSV Desc:</span> {match.csv_form_d_description}</div>
-                {match.sap_code && match.sap_code !== 'Not found' && (
-                  <div><span className="font-medium">SAP:</span> {match.sap_code}</div>
+                <div><span className="font-medium">CSV HS:</span> {bestMatch.csv_hs_code}</div>
+                <div><span className="font-medium">CSV Desc:</span> {bestMatch.csv_form_d_description}</div>
+                {bestMatch.sap_code && bestMatch.sap_code !== 'Not found' && (
+                  <div><span className="font-medium">SAP:</span> {bestMatch.sap_code}</div>
                 )}
               </div>
+              {!hasCompleteMatch && (
+                <div className="mt-2 text-xs text-yellow-700 italic">
+                  Note: Description does not exactly match. Manual verification recommended.
+                </div>
+              )}
             </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+          </div>
+        ) : (
+          <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-800">
+            No matches found in database
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const ThreeWayComparisonCard = ({ field }) => (
     <div className="border rounded-lg p-4 bg-gray-50">

@@ -860,13 +860,24 @@ Important:
         print(f"Confidence score: {comparison_result['confidence_score']:.1%}")
         
         return comparison_result
+    
+    def normalize_description_strict(self, description_text: str) -> str:
+        """
+        Normalize description by removing only spaces and converting to uppercase.
+        Keeps parentheses, commas, slashes, and other punctuation intact.
+        """
+        if not description_text or description_text == "Not found" or description_text == "":
+            return ""
+        # Remove spaces and newlines, convert to uppercase
+        normalized = str(description_text).replace(" ", "").replace("\n", "").upper()
+        return normalized.strip()
 
     def validate_product_info(self, formd_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate ALL products from Form D against product database"""
+        """Validate ALL products from Form D against product database with strict description matching"""
         product_validation = {
             "found_matches": False,
             "product_validations": [],
-            "validation_process": "Match HS codes first, then validate Form D description"
+            "validation_process": "Match HS codes first, then validate Form D description with exact normalized match"
         }
         
         if self.product_data is None:
@@ -906,13 +917,15 @@ Important:
                 product_validation["product_validations"].append(product_result)
                 continue
             
-            normalized_formd_desc = formd_description.upper().replace(" ", "")
+            # Normalize Form D description using strict method
+            normalized_formd_desc = self.normalize_description_strict(formd_description)
             best_matches = []
             
             for _, row in self.product_data.iterrows():
                 hs_code_from_csv = str(row.get("H.S code", "")).strip()
                 
                 if hs_code_from_csv and hs_code_from_csv != "Not found":
+                    # Check HS code match
                     hs_code_match = False
                     hs_code_similarity = 0.0
                     
@@ -927,33 +940,38 @@ Important:
                         form_d_desc_from_csv = str(row.get("Form D description", "")).strip()
                         
                         if form_d_desc_from_csv and form_d_desc_from_csv != "Not found":
-                            normalized_csv_desc = form_d_desc_from_csv.upper().replace(" ", "")
-                            description_exists = normalized_csv_desc in normalized_formd_desc
-                            _, description_similarity = self.fuzzy_match_description(formd_description, form_d_desc_from_csv)
+                            # Normalize CSV description using strict method
+                            normalized_csv_desc = self.normalize_description_strict(form_d_desc_from_csv)
                             
-                            reverse_match = False
-                            if len(normalized_csv_desc) > 20:
-                                words_in_csv = [word for word in normalized_csv_desc.split() if len(word) > 3]
-                                if words_in_csv:
-                                    matches_found = sum(1 for word in words_in_csv if word in normalized_formd_desc)
-                                    reverse_match = (matches_found / len(words_in_csv)) >= 0.7
+                            # Check if normalized CSV description is contained in normalized Form D description
+                            exact_match = (normalized_csv_desc in normalized_formd_desc)
                             
-                            overall_match = description_exists or reverse_match or description_similarity >= 0.8
+                            # Calculate similarity for reporting
+                            description_similarity = 1.0 if exact_match else difflib.SequenceMatcher(
+                                None, normalized_formd_desc, normalized_csv_desc
+                            ).ratio()
+                            
+                            # Overall match is TRUE only if CSV description is contained in Form D description
+                            overall_match = exact_match
                             
                             best_matches.append({
                                 "csv_hs_code": hs_code_from_csv,
                                 "hs_code_similarity": round(hs_code_similarity, 3),
                                 "csv_form_d_description": form_d_desc_from_csv,
+                                "normalized_formd": normalized_formd_desc,
+                                "normalized_csv": normalized_csv_desc,
                                 "description_similarity": round(description_similarity, 3),
+                                "exact_match": exact_match,
                                 "sap_code": row.get("SAP code", "Not found"),
                                 "overall_match": overall_match
                             })
             
+            # Sort by HS code similarity first, then description similarity
             best_matches.sort(key=lambda x: (x["hs_code_similarity"], x["description_similarity"]), reverse=True)
             
-            # *** MODIFICATION: Keep only top 3 matches ***
+            # Keep only top 3 matches
             product_result["matches"] = best_matches[:3]
-            product_result["total_matches_found"] = len(best_matches)  # Track total before truncation
+            product_result["total_matches_found"] = len(best_matches)
             product_result["found_match"] = any(match["overall_match"] for match in best_matches[:3])
             
             if not product_result["found_match"]:
