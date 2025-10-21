@@ -144,7 +144,7 @@ class DocumentProcessor:
             return {"error": str(e)}
 
     def extract_formd_info(self, formd_pdf_path: str, page_numbers: List[int] = None, save_debug_image: bool = False) -> Dict[str, Any]:
-        """Extract information from specified pages of Form D document"""
+        """Extract information from specified pages of Form D document with multi-page context"""
         try:
             print(f"Converting Form D PDF to images...")
             images = convert_from_path(formd_pdf_path, dpi=300)
@@ -167,21 +167,27 @@ class DocumentProcessor:
             
             print(f"Processing Form D pages: {valid_pages}")
             
-            all_products = []
-            common_info = {}
-            
-            for idx, page_index in enumerate(valid_pages):
-                print(f"\nProcessing Form D page {page_index} ({idx + 1}/{len(valid_pages)})...")
-                image = images[page_index]
-                
-                if save_debug_image:
+            # Save debug images if requested
+            if save_debug_image:
+                for page_index in valid_pages:
                     debug_filename = f"debug_formd_page{page_index}.png"
-                    image.save(debug_filename)
+                    images[page_index].save(debug_filename)
                     print(f"Debug image saved: {debug_filename}")
-                
-                if idx == 0:
-                    # First selected page: extract common info + products
-                    question = """Extract ALL information from this Form D page as JSON:
+            
+            # Convert all selected pages to base64
+            base64_images = []
+            for page_index in valid_pages:
+                base64_image = self.image_to_base64(images[page_index])
+                base64_images.append(base64_image)
+            
+            # Build multi-image message content
+            print(f"\nSending all {len(valid_pages)} pages to LLM for extraction...")
+            
+            message_content = [
+                {
+                    "type": "text",
+                    "text": """Extract ALL information from these Form D pages as JSON. IMPORTANT: Some product descriptions may be split across pages - you must merge them into single complete entries.
+
     {
     "Exporter's business name": "...",
     "Exporter's address": "...",
@@ -193,7 +199,7 @@ class DocumentProcessor:
         {
         "Item Number": "...",
         "HS CODE": "complete float number HS CODE",
-        "Product Description": "...",
+        "Product Description": "COMPLETE merged description if split across pages",
         "CTNS": "...",
         "Gross weight": "...",
         "Number of invoices": "...",
@@ -202,50 +208,79 @@ class DocumentProcessor:
     ]
     }
 
-    Important:
-    - Extract ALL product items from the table (items 1, 2, 3, 4, 5, etc.)
-    - Each row in columns 5-10 is a separate product
-    - If information is not found, use "Not found"
-    - Return only valid JSON"""
-                else:
-                    # Subsequent pages: extract only products
-                    question = """Extract ALL product items from this Form D continuation page as JSON:
-    {
-    "products": [
-        {
-        "Item Number": "...",
-        "HS CODE": "float number HS CODE",
-        "Product Description": "...",
-        "CTNS": "...",
-        "Gross weight": "...",
-        "Number of invoices": "...",
-        "Date of invoices": "..."
-        }
-    ]
-    }
+    CRITICAL INSTRUCTIONS FOR HANDLING SPLIT PRODUCTS:
+    1. Look for incomplete product descriptions at the end of one page that continue on the next page
+    2. Common patterns of splits:
+    - Description ends mid-sentence without closing punctuation
+    - Next page starts with lowercase text continuing the description
+    - Product description spans multiple lines across page boundaries
 
-    Important:
-    - Extract ALL product items from the table
-    - Each row is a separate product
-    - If information is not found, use "Not found"
-    - Return only valid JSON"""
-                
-                page_data = self.extract_image_info(image, question)
-                
-                if idx == 0 and "products" in page_data:
-                    # Save common info from first selected page
-                    common_info = {k: v for k, v in page_data.items() if k != "products"}
-                    all_products.extend(page_data["products"])
-                elif "products" in page_data:
-                    all_products.extend(page_data["products"])
+    3. When you find a split product, MERGE IT into a single product entry with the COMPLETE description
+    4. Example of what to merge:
+    Page 1: "FORMULATED SUPPLEMENTARY FOOD (FOR PREGNANT &"
+    Page 2: "BREASTFEEDING MOTHERS) STRAWBERRY YOGHURT FLAVOR, (400G/CAN)"
+    Result: "FORMULATED SUPPLEMENTARY FOOD (FOR PREGNANT & BREASTFEEDING MOTHERS) STRAWBERRY YOGHURT FLAVOR, (400G/CAN)"
+
+    5. DO NOT create duplicate entries for the same product
+    6. Extract ALL product items from the table (items 1, 2, 3, 4, 5, etc.)
+    7. Each row in columns 5-10 is a product (unless it's a continuation from previous page)
+    8. If information is not found, use "Not found"
+    9. Return only valid JSON
+
+    Remember: Analyze ALL pages together to identify and merge split descriptions."""
+                }
+            ]
             
-            # Combine common info with all products
-            result = common_info.copy()
-            result["products"] = all_products
-            result["total_products"] = len(all_products)
+            # Add all images to the message
+            for idx, base64_image in enumerate(base64_images):
+                message_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{base64_image}"}
+                })
+                print(f"  Added page {valid_pages[idx]} to LLM request")
+            
+            # Single API call with all pages
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": message_content
+                    }
+                ],
+                max_tokens=4000,  # Increased for multiple pages
+                temperature=0.1
+            )
+            
+            output_text = response.choices[0].message.content
+            
+            try:
+                result = json.loads(output_text)
+            except json.JSONDecodeError:
+                print("Warning: Could not parse JSON response, attempting to clean...")
+                json_match = re.search(r'\{.*\}', output_text, re.DOTALL)
+                if json_match:
+                    try:
+                        result = json.loads(json_match.group())
+                    except json.JSONDecodeError:
+                        print(f"Raw response: {output_text}")
+                        return {"raw_response": output_text, "parsing_error": "Could not parse as JSON"}
+                else:
+                    print(f"Raw response: {output_text}")
+                    return {"raw_response": output_text, "parsing_error": "Could not parse as JSON"}
+            
+            # Add metadata
+            result["total_products"] = len(result.get("products", []))
             result["pages_processed"] = valid_pages
             
-            print(f"\nExtracted {len(all_products)} product(s) from Form D pages {valid_pages}")
+            print(f"\nExtracted {result['total_products']} product(s) from Form D pages {valid_pages}")
+            
+            # Show product summaries
+            for i, product in enumerate(result.get("products", []), 1):
+                item_num = product.get("Item Number", "?")
+                desc_preview = product.get("Product Description", "")[:80]
+                print(f"  Product {i} (Item {item_num}): {desc_preview}...")
+            
             return result
             
         except Exception as e:
