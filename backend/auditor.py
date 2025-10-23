@@ -463,6 +463,153 @@ Important:
         except Exception as e:
             print(f"Error extracting invoice info: {e}")
             return {"error": str(e)}
+        
+        
+        
+    def extract_packing_list_info(self, packing_list_pdf_path: str, page_numbers: List[int] = None, rotate_image: bool = True, crop_bottom_percent: float = 18, save_debug_image: bool = False) -> Dict[str, Any]:
+        """Extract information from specified pages of Packing List document"""
+        try:
+            print(f"Converting Packing List PDF to images...")
+            images = convert_from_path(packing_list_pdf_path, dpi=300)
+            print(f"Packing List has {len(images)} page(s)")
+            
+            # If no page numbers specified, use all pages
+            if page_numbers is None:
+                page_numbers = list(range(len(images)))
+            
+            # Validate page numbers
+            valid_pages = []
+            for page_num in page_numbers:
+                if 0 <= page_num < len(images):
+                    valid_pages.append(page_num)
+                else:
+                    print(f"Warning: Page {page_num} is out of range (0-{len(images)-1}). Skipping.")
+            
+            if not valid_pages:
+                raise ValueError("No valid pages to process")
+            
+            print(f"Processing Packing List pages: {valid_pages}")
+            
+            # NEW: Store page-specific data
+            pages_data = []
+            common_info = {}
+            
+            for idx, page_index in enumerate(valid_pages):
+                print(f"\nProcessing Packing List page {page_index} ({idx + 1}/{len(valid_pages)})...")
+                image = images[page_index]
+                
+                if rotate_image:
+                    print(f"Rotating packing list page {page_index} 90 degrees clockwise...")
+                    image = image.rotate(-90, expand=True)
+                
+                if crop_bottom_percent > 0:
+                    width, height = image.size
+                    crop_pixels = int(height * crop_bottom_percent / 100)
+                    cropped_height = height - crop_pixels
+                    print(f"Cropping {crop_bottom_percent}% ({crop_pixels} pixels) from bottom of page {page_index}. New height: {cropped_height}")
+                    crop_box = (0, 0, width, cropped_height)
+                    image = image.crop(crop_box)
+                
+                if save_debug_image:
+                    rotation_text = "rotated_" if rotate_image else ""
+                    debug_filename = f"debug_packing_list_page{page_index}_{rotation_text}cropped.png"
+                    image.save(debug_filename)
+                    print(f"Debug image saved: {debug_filename}")
+                
+                # MODIFIED: Updated extraction prompt
+                question = """Extract ALL information from this Packing List page as JSON:
+    {
+    "page": "...",
+    "shipper_name": "...",
+    "shipper_address": "...",
+    "consignee_name": "...",
+    "consignee_address": "...",
+    "notify": "...",
+    "shipment_number": "...",
+    "shipped_from": "...",
+    "port_of_discharge": "...",
+    "container_summary": "...",
+    "shipment_summary": "...",
+    "container_summary_kg_gross": "...",
+    "shipment_summary_kg_gross": "...",
+    "products": [
+        {
+        "supplier_list": "...",
+        "abbott_list_nbr": "...",
+        "description": "...",
+        "your_order": "...",
+        "invoice": "...",
+        "quantity": "...",
+        "lot_number": "...",
+        "packed_in": "...",
+        "inner_qty": "...",
+        "volume_m3": "...",
+        "kilogram": "..."
+        }
+    ]
+    }
+
+    Important:
+    - Extract ALL available information from this page
+    - For header/summary fields not present on this page, use "Not found"
+    - Extract ALL product entries from the table if present
+    - If information is not found, use "Not found"
+    - Return only valid JSON"""
+                
+                page_data = self.extract_image_info(image, question)
+                
+                # NEW: Extract common info from first page or update with non-empty values
+                if idx == 0:
+                    # First page: initialize common_info with header fields
+                    common_info = {k: v for k, v in page_data.items() 
+                                if k not in ["products", "container_summary", "shipment_summary", 
+                                            "container_summary_kg_gross", "shipment_summary_kg_gross"]}
+                else:
+                    # Subsequent pages: update common_info with any non-empty values
+                    for key, value in page_data.items():
+                        if key not in ["products", "container_summary", "shipment_summary", 
+                                    "container_summary_kg_gross", "shipment_summary_kg_gross"]:
+                            current_val = common_info.get(key, "")
+                            if (not current_val or current_val == "Not found") and value and value != "Not found":
+                                common_info[key] = value
+                                print(f"  Updated '{key}' from page {page_index}: {value}")
+                
+                # NEW: Store page-specific data
+                page_result = {
+                    "page": page_data.get("page", "Not found"),
+                    "container_summary": page_data.get("container_summary", "Not found"),
+                    "shipment_summary": page_data.get("shipment_summary", "Not found"),
+                    "container_summary_kg_gross": page_data.get("container_summary_kg_gross", "Not found"),
+                    "shipment_summary_kg_gross": page_data.get("shipment_summary_kg_gross", "Not found"),
+                    "products": page_data.get("products", [])
+                }
+                pages_data.append(page_result)
+            
+            # NEW: Build result with page-specific structure
+            result = common_info.copy()
+            result["pages"] = pages_data
+            result["pages_processed"] = valid_pages
+            
+            # NEW: Calculate totals across all pages
+            total_products = sum(len(page["products"]) for page in pages_data)
+            result["total_products"] = total_products
+            
+            print(f"\nExtracted {total_products} product(s) across {len(valid_pages)} page(s)")
+            
+            # Show page summaries
+            for page_result in pages_data:
+                page_num = page_result["page"]
+                num_products = len(page_result["products"])
+                print(f"  Page {page_num}: {num_products} product(s)")
+                for i, product in enumerate(page_result["products"], 1):
+                    desc_preview = product.get("description", "")[:60]
+                    print(f"    Product {i}: {desc_preview}...")
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error extracting Packing List info: {e}")
+            return {"error": str(e)}
 
     def normalize_weight(self, weight_text: str) -> str:
         """Normalize weight by removing spaces, words and letters"""
@@ -1127,10 +1274,10 @@ Important:
         
         return validation_result
 
-    def process_documents(self, formd_pdf_path: str, invoice_pdf_path: str, bl_pdf_path: str, 
-                    formd_pages: List[int] = None, invoice_page: int = 2, bl_pages: List[int] = None,
-                    rotate_invoice: bool = True, crop_bottom_percent: float = 18) -> Dict[str, Any]:
-        """Process Form D, invoice, and BL files - supports multiple products and containers"""
+    def process_documents(self, formd_pdf_path: str, invoice_pdf_path: str, bl_pdf_path: str, packing_list_pdf_path: str = None,
+                formd_pages: List[int] = None, invoice_page: int = 2, bl_pages: List[int] = None, packing_list_pages: List[int] = None,
+                rotate_invoice: bool = True, rotate_packing_list: bool = True, crop_bottom_percent: float = 18) -> Dict[str, Any]:
+        """Process Form D, invoice, BL, and optionally Packing List files"""
         try:
             print("="*60)
             print("EXTRACTING FORM D INFORMATION")
@@ -1153,6 +1300,16 @@ Important:
             print("BL Data:")
             print(json.dumps(bl_data, indent=2))
             
+            # Extract packing list if provided
+            packing_list_data = None
+            if packing_list_pdf_path:
+                print("\n" + "="*60)
+                print("EXTRACTING PACKING LIST INFORMATION")
+                print("="*60)
+                packing_list_data = self.extract_packing_list_info(packing_list_pdf_path, packing_list_pages, rotate_packing_list, crop_bottom_percent)
+                print("Packing List Data:")
+                print(json.dumps(packing_list_data, indent=2))
+            
             print("\n" + "="*60)
             print("COMPARING DOCUMENTS")
             print("="*60)
@@ -1171,6 +1328,7 @@ Important:
                 "formd_data": formd_data,
                 "invoice_data": invoice_data,
                 "bl_data": bl_data,
+                "packing_list_data": packing_list_data,
                 "comparison": comparison_result,
                 "validation": validation_result,
                 "overall_assessment": self.generate_overall_assessment(comparison_result, validation_result)
@@ -1304,36 +1462,47 @@ Important:
 
 def main():
     if len(sys.argv) < 4:
-        print("Usage: python auditor.py <formd_pdf> <invoice_pdf> <bl_pdf> [options]")
+        print("Usage: python auditor.py <formd_pdf> <invoice_pdf> <bl_pdf> [packing_list_pdf] [options]")
         print("\nOptions:")
         print("  --formd-pages=0,1,2    Comma-separated page numbers for Form D (default: 0)")
         print("  --invoice-page=2       Page number for invoice (default: 2)")
         print("  --bl-pages=0,1         Comma-separated page numbers for BL (default: 0)")
+        print("  --packing-list-pages=0,1  Comma-separated page numbers for Packing List (default: all)")
         print("  --api-key=KEY          OpenAI API key")
         print("  --model=MODEL          OpenAI model (default: gpt-4o)")
-        print("  --no-rotate            Don't rotate invoice image")
-        print("  --crop-bottom=30       Crop percentage from bottom (default: 30)")
+        print("  --no-rotate-invoice    Don't rotate invoice image")
+        print("  --no-rotate-packing    Don't rotate packing list image")
+        print("  --crop-bottom=18       Crop percentage from bottom (default: 18)")
         print("\nExamples:")
         print("  python auditor.py formd.pdf invoice.pdf bl.pdf")
-        print("  python auditor.py formd.pdf invoice.pdf bl.pdf --formd-pages=0,1,2 --bl-pages=0,1")
-        print("  python auditor.py formd.pdf invoice.pdf bl.pdf --formd-pages=0 --invoice-page=2 --bl-pages=0")
+        print("  python auditor.py formd.pdf invoice.pdf bl.pdf packing_list.pdf")
+        print("  python auditor.py formd.pdf invoice.pdf bl.pdf packing_list.pdf --packing-list-pages=0,1,2")
         sys.exit(1)
     
     formd_pdf_path = sys.argv[1]
     invoice_pdf_path = sys.argv[2]
     bl_pdf_path = sys.argv[3]
     
+    # Check if packing list is provided (4th argument)
+    packing_list_pdf_path = None
+    args_start_index = 4
+    if len(sys.argv) > 4 and not sys.argv[4].startswith('--'):
+        packing_list_pdf_path = sys.argv[4]
+        args_start_index = 5
+    
     # Default values
     formd_pages = [0]
     invoice_page = 2
     bl_pages = [0]
+    packing_list_pages = None  # None means all pages
     api_key = None
     model = "gpt-4o"
     rotate_invoice = True
+    rotate_packing_list = True
     crop_bottom_percent = 18.0
     
     # Parse arguments
-    for arg in sys.argv[4:]:
+    for arg in sys.argv[args_start_index:]:
         if arg.startswith('--formd-pages='):
             try:
                 pages_str = arg.split('=')[1]
@@ -1354,20 +1523,29 @@ def main():
                 print(f"BL pages set to: {bl_pages}")
             except ValueError:
                 print(f"Warning: Invalid bl-pages format '{arg}'. Using default [0].")
+        elif arg.startswith('--packing-list-pages='):
+            try:
+                pages_str = arg.split('=')[1]
+                packing_list_pages = [int(p.strip()) for p in pages_str.split(',')]
+                print(f"Packing List pages set to: {packing_list_pages}")
+            except ValueError:
+                print(f"Warning: Invalid packing-list-pages format '{arg}'. Using default (all pages).")
         elif arg.startswith('--api-key='):
             api_key = arg.split('=')[1]
         elif arg.startswith('--model='):
             model = arg.split('=')[1]
-        elif arg == '--no-rotate':
+        elif arg == '--no-rotate-invoice':
             rotate_invoice = False
+        elif arg == '--no-rotate-packing':
+            rotate_packing_list = False
         elif arg.startswith('--crop-bottom='):
             try:
                 crop_bottom_percent = float(arg.split('=')[1])
                 if crop_bottom_percent < 0 or crop_bottom_percent > 50:
-                    print("Warning: crop-bottom percentage should be between 0 and 50. Using default 30%.")
+                    print("Warning: crop-bottom percentage should be between 0 and 50. Using default 18%.")
                     crop_bottom_percent = 18.0
             except ValueError:
-                print("Warning: Invalid crop-bottom value. Using default 30%.")
+                print("Warning: Invalid crop-bottom value. Using default 18%.")
                 crop_bottom_percent = 18.0
     
     # Validate file paths
@@ -1383,6 +1561,10 @@ def main():
         print(f"Error: BL file not found: {bl_pdf_path}")
         sys.exit(1)
     
+    if packing_list_pdf_path and not os.path.exists(packing_list_pdf_path):
+        print(f"Error: Packing List file not found: {packing_list_pdf_path}")
+        sys.exit(1)
+    
     if not api_key and not os.getenv('OPENAI_API_KEY'):
         print("Error: OpenAI API key not provided. Please either:")
         print("1. Use --api-key=your_key")
@@ -1396,6 +1578,9 @@ def main():
         print(f"  - Form D pages: {formd_pages}")
         print(f"  - Invoice page: {invoice_page}")
         print(f"  - BL pages: {bl_pages}")
+        if packing_list_pdf_path:
+            print(f"  - Packing List pages: {packing_list_pages if packing_list_pages else 'all'}")
+            print(f"  - Rotate packing list: {'Yes' if rotate_packing_list else 'No'}")
         print(f"  - Rotate invoice: {'Yes' if rotate_invoice else 'No'}")
         print(f"  - Crop bottom: {crop_bottom_percent}%")
         print(f"  - Model: {model}")
@@ -1404,10 +1589,13 @@ def main():
             formd_pdf_path, 
             invoice_pdf_path,
             bl_pdf_path,
+            packing_list_pdf_path,
             formd_pages,
             invoice_page,
             bl_pages,
-            rotate_invoice, 
+            packing_list_pages,
+            rotate_invoice,
+            rotate_packing_list,
             crop_bottom_percent
         )
         
@@ -1416,7 +1604,12 @@ def main():
         base_name = os.path.splitext(os.path.basename(formd_pdf_path))[0]
         invoice_base = os.path.splitext(os.path.basename(invoice_pdf_path))[0]
         bl_base = os.path.splitext(os.path.basename(bl_pdf_path))[0]
-        output_file = f"document_analysis_{base_name}_vs_{invoice_base}_vs_{bl_base}.json"
+        
+        if packing_list_pdf_path:
+            pl_base = os.path.splitext(os.path.basename(packing_list_pdf_path))[0]
+            output_file = f"document_analysis_{base_name}_vs_{invoice_base}_vs_{bl_base}_vs_{pl_base}.json"
+        else:
+            output_file = f"document_analysis_{base_name}_vs_{invoice_base}_vs_{bl_base}.json"
         
         try:
             with open(output_file, 'w', encoding='utf-8') as f:
