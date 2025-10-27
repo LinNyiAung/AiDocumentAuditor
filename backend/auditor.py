@@ -398,7 +398,7 @@ class DocumentProcessor:
             return {"error": str(e)}
 
 
-    def extract_invoice_info(self, invoice_pdf_path: str, page_index: int = 2, rotate_image: bool = True, crop_bottom_percent: float = 18, save_debug_image: bool = False) -> Dict[str, Any]:
+    def extract_invoice_info(self, invoice_pdf_path: str, page_index: int = 2, rotate_image: bool = True, crop_bottom_percent: float = 18, crop_top_percent: float = 5, save_debug_image: bool = False) -> Dict[str, Any]:
         """Extract information from invoice document"""
         try:
             print(f"Converting Invoice PDF to image (page {page_index})...")
@@ -413,6 +413,15 @@ class DocumentProcessor:
                 print("Rotating invoice image 90 degrees clockwise...")
                 image = image.rotate(-90, expand=True)
             
+            # Crop top first
+            if crop_top_percent > 0:
+                width, height = image.size
+                crop_top_pixels = int(height * crop_top_percent / 100)
+                print(f"Cropping {crop_top_percent}% ({crop_top_pixels} pixels) from top")
+                crop_box = (0, crop_top_pixels, width, height)
+                image = image.crop(crop_box)
+
+            # Then crop bottom
             if crop_bottom_percent > 0:
                 width, height = image.size
                 crop_pixels = int(height * crop_bottom_percent / 100)
@@ -445,6 +454,7 @@ class DocumentProcessor:
     {
       "description": "product description",
       "lot_number": "...",
+      "quantity": "...",
       "total_quantity": "...",
       "price_per_one": "...",
       "total_price": "..."
@@ -1275,8 +1285,8 @@ Important:
         return validation_result
 
     def process_documents(self, formd_pdf_path: str, invoice_pdf_path: str, bl_pdf_path: str, packing_list_pdf_path: str = None,
-                formd_pages: List[int] = None, invoice_page: int = 2, bl_pages: List[int] = None, packing_list_pages: List[int] = None,
-                rotate_invoice: bool = True, rotate_packing_list: bool = True, crop_bottom_percent: float = 18) -> Dict[str, Any]:
+            formd_pages: List[int] = None, invoice_page: int = 2, bl_pages: List[int] = None, packing_list_pages: List[int] = None,
+            rotate_invoice: bool = True, rotate_packing_list: bool = True, crop_bottom_percent: float = 18, crop_top_percent: float = 5) -> Dict[str, Any]:
         """Process Form D, invoice, BL, and optionally Packing List files"""
         try:
             print("="*60)
@@ -1289,7 +1299,7 @@ Important:
             print("\n" + "="*60)
             print("EXTRACTING INVOICE INFORMATION")
             print("="*60)
-            invoice_data = self.extract_invoice_info(invoice_pdf_path, invoice_page, rotate_invoice, crop_bottom_percent)
+            invoice_data = self.extract_invoice_info(invoice_pdf_path, invoice_page, rotate_invoice, crop_bottom_percent, crop_top_percent)
             print("Invoice Data:")
             print(json.dumps(invoice_data, indent=2))
             
@@ -1473,6 +1483,7 @@ def main():
         print("  --no-rotate-invoice    Don't rotate invoice image")
         print("  --no-rotate-packing    Don't rotate packing list image")
         print("  --crop-bottom=18       Crop percentage from bottom (default: 18)")
+        print("  --crop-top=10          Crop percentage from top for invoice (default: 10)")
         print("\nExamples:")
         print("  python auditor.py formd.pdf invoice.pdf bl.pdf")
         print("  python auditor.py formd.pdf invoice.pdf bl.pdf packing_list.pdf")
@@ -1500,6 +1511,7 @@ def main():
     rotate_invoice = True
     rotate_packing_list = True
     crop_bottom_percent = 18.0
+    crop_top_percent = 5.0
     
     # Parse arguments
     for arg in sys.argv[args_start_index:]:
@@ -1547,6 +1559,15 @@ def main():
             except ValueError:
                 print("Warning: Invalid crop-bottom value. Using default 18%.")
                 crop_bottom_percent = 18.0
+        elif arg.startswith('--crop-top='):
+            try:
+                crop_top_percent = float(arg.split('=')[1])
+                if crop_top_percent < 0 or crop_top_percent > 50:
+                    print("Warning: crop-top percentage should be between 0 and 50. Using default 10%.")
+                    crop_top_percent = 5.0
+            except ValueError:
+                print("Warning: Invalid crop-top value. Using default 10%.")
+                crop_top_percent = 5.0
     
     # Validate file paths
     if not os.path.exists(formd_pdf_path):
@@ -1582,8 +1603,8 @@ def main():
             print(f"  - Packing List pages: {packing_list_pages if packing_list_pages else 'all'}")
             print(f"  - Rotate packing list: {'Yes' if rotate_packing_list else 'No'}")
         print(f"  - Rotate invoice: {'Yes' if rotate_invoice else 'No'}")
+        print(f"  - Crop top (invoice): {crop_top_percent}%")
         print(f"  - Crop bottom: {crop_bottom_percent}%")
-        print(f"  - Model: {model}")
         
         result = processor.process_documents(
             formd_pdf_path, 
@@ -1596,7 +1617,8 @@ def main():
             packing_list_pages,
             rotate_invoice,
             rotate_packing_list,
-            crop_bottom_percent
+            crop_bottom_percent,
+            crop_top_percent
         )
         
         processor.print_summary_report(result)
