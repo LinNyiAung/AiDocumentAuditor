@@ -537,10 +537,10 @@ Important:
                 question = """Extract ALL information from this Packing List page as JSON:
     {
     "page": "...",
-    "shipper_name": "...",
-    "shipper_address": "...",
-    "consignee_name": "...",
-    "consignee_address": "...",
+    "shipped_by_name": "...",
+    "shipped_by_address": "...",
+    "ship_to_name": "...",
+    "ship_to_address": "...",
     "notify": "...",
     "shipment_number": "...",
     "shipped_from": "...",
