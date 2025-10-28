@@ -1323,7 +1323,7 @@ Important:
                 print("\n" + "="*60)
                 print("EXTRACTING PACKING LIST INFORMATION")
                 print("="*60)
-                packing_list_data = self.extract_packing_list_info(packing_list_pdf_path, packing_list_pages, rotate_packing_list, crop_bottom_percent)
+                packing_list_data = self.extract_packing_list_info(packing_list_pdf_path, packing_list_pages, rotate_packing_list, crop_bottom_percent=50.0)
                 print("Packing List Data:")
                 print(json.dumps(packing_list_data, indent=2))
             
