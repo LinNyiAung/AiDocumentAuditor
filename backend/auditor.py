@@ -120,7 +120,7 @@ class DocumentProcessor:
                     }
                 ],
                 max_tokens=4000,
-                temperature=0.1
+                temperature=0
             )
             
             output_text = response.choices[0].message.content
@@ -398,7 +398,7 @@ class DocumentProcessor:
             return {"error": str(e)}
 
 
-    def extract_invoice_info(self, invoice_pdf_path: str, page_index: int = 2, rotate_image: bool = True, crop_bottom_percent: float = 18, crop_top_percent: float = 7, save_debug_image: bool = False) -> Dict[str, Any]:
+    def extract_invoice_info(self, invoice_pdf_path: str, page_index: int = 2, rotate_image: bool = True, crop_bottom_percent: float = 18, crop_top_percent: float = 7.5, save_debug_image: bool = False) -> Dict[str, Any]:
         """Extract information from invoice document"""
         try:
             print(f"Converting Invoice PDF to image (page {page_index})...")
@@ -450,6 +450,7 @@ class DocumentProcessor:
   "your_order": "...",
   "our_order": "...",
   "regional_order": "...",
+  "total_price": "...",
   "total_gross_weight_kgs": "...",
   "total_net_weight_kgs": "...",
   "packed_in": "total cartons/boxes",
@@ -1295,7 +1296,7 @@ CRITICAL: Extract EVERY SINGLE LINE from the product table as a separate entry.
 
     def process_documents(self, formd_pdf_path: str, invoice_pdf_path: str, bl_pdf_path: str, packing_list_pdf_path: str = None,
             formd_pages: List[int] = None, invoice_page: int = 2, bl_pages: List[int] = None, packing_list_pages: List[int] = None,
-            rotate_invoice: bool = True, rotate_packing_list: bool = True, crop_bottom_percent: float = 18, crop_top_percent: float = 7) -> Dict[str, Any]:
+            rotate_invoice: bool = True, rotate_packing_list: bool = True, crop_bottom_percent: float = 18, crop_top_percent: float = 7.5) -> Dict[str, Any]:
         """Process Form D, invoice, BL, and optionally Packing List files"""
         try:
             print("="*60)
@@ -1520,7 +1521,7 @@ def main():
     rotate_invoice = True
     rotate_packing_list = True
     crop_bottom_percent = 18.0
-    crop_top_percent = 7.0
+    crop_top_percent = 7.5
     
     # Parse arguments
     for arg in sys.argv[args_start_index:]:
@@ -1573,10 +1574,10 @@ def main():
                 crop_top_percent = float(arg.split('=')[1])
                 if crop_top_percent < 0 or crop_top_percent > 50:
                     print("Warning: crop-top percentage should be between 0 and 50. Using default 10%.")
-                    crop_top_percent = 7.0
+                    crop_top_percent = 7.5
             except ValueError:
                 print("Warning: Invalid crop-top value. Using default 10%.")
-                crop_top_percent = 7.0
+                crop_top_percent = 7.5
     
     # Validate file paths
     if not os.path.exists(formd_pdf_path):
