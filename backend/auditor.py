@@ -119,7 +119,7 @@ class DocumentProcessor:
                         ]
                     }
                 ],
-                max_tokens=2000,
+                max_tokens=4000,
                 temperature=0.1
             )
             
@@ -462,16 +462,18 @@ class DocumentProcessor:
       "manufact": "...",
       "expiry_dte": "...",
       "quantity": "...",
-      "total_quantity": "...",
       "price_per_one": "...",
       "total_price": "..."
     }
   ]
 }
 
-Important:
-- Extract ALL product lines from the table
-- Include both header info and all products
+CRITICAL: Extract EVERY SINGLE LINE from the product table as a separate entry.
+- If the same product appears with different lot numbers, create separate entries
+- If the same product appears multiple times (even with same lot), create separate entries  
+- Do NOT combine or aggregate lines - each row in the table = one product entry
+- Extract ALL fields for each line exactly as shown
+- The products array should have one entry per table row
 - If information is not found, use "Not found"
 - Return only valid JSON"""
             
